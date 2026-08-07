@@ -2,73 +2,6 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="Transparent">
-    <Grid Margin="24">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/> <!-- Header & Primary CTA -->
-            <RowDefinition Height="*"/>    <!-- Grouped Content / Empty State -->
-        </Grid.RowDefinitions>
-
-        <!-- Header -->
-        <Grid Grid.Row="0" Margin="0,0,0,20">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="0">
-                <TextBlock Text="🔔 提醒事项" Style="{StaticResource Header1TextStyle}"/>
-                <TextBlock Text="记录生日、纪念日与重要事项，并在合适的时间通知您" Style="{StaticResource SubHeaderTextStyle}" Margin="0,4,0,0"/>
-            </StackPanel>
-            <Button x:Name="AddReminderButton" Grid.Column="1" Content="+ 新建提醒" Style="{StaticResource ModernButton}" Width="130" Click="AddReminderButton_Click"/>
-        </Grid>
-
-        <!-- Main Content Area -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <StackPanel>
-                <!-- Group 1: Today -->
-                <StackPanel x:Name="TodayGroupPanel" Margin="0,0,0,20" Visibility="Collapsed">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                        <TextBlock Text="📌 今天" Style="{StaticResource Header2TextStyle}" Foreground="{DynamicResource PrimaryBrush}"/>
-                        <Border Background="{DynamicResource PrimaryBrush}" CornerRadius="10" Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Center">
-                            <TextBlock x:Name="TodayBadgeText" Text="0" Foreground="White" FontSize="11" FontWeight="Bold"/>
-                        </Border>
-                    </StackPanel>
-                    <ItemsControl x:Name="TodayItemsControl"/>
-                </StackPanel>
-
-                <!-- Group 2: Upcoming -->
-                <StackPanel x:Name="UpcomingGroupPanel" Margin="0,0,0,20" Visibility="Collapsed">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                        <TextBlock Text="🗓 即将到来 (30天内)" Style="{StaticResource Header2TextStyle}"/>
-                        <Border Background="{DynamicResource SurfaceSecondaryBackground}" CornerRadius="10" Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Center">
-                            <TextBlock x:Name="UpcomingBadgeText" Text="0" Style="{StaticResource CaptionTextStyle}" FontWeight="Bold"/>
-                        </Border>
-                    </StackPanel>
-                    <ItemsControl x:Name="UpcomingItemsControl"/>
-                </StackPanel>
-
-                <!-- Group 3: Later -->
-                <StackPanel x:Name="LaterGroupPanel" Margin="0,0,0,20" Visibility="Collapsed">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                        <TextBlock Text="📅 以后" Style="{StaticResource Header2TextStyle}"/>
-                        <Border Background="{DynamicResource SurfaceSecondaryBackground}" CornerRadius="10" Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Center">
-                            <TextBlock x:Name="LaterBadgeText" Text="0" Style="{StaticResource CaptionTextStyle}" FontWeight="Bold"/>
-                        </Border>
-                    </StackPanel>
-                    <ItemsControl x:Name="LaterItemsControl"/>
-                </StackPanel>
-
-                <!-- Empty State -->
-                <Border x:Name="EmptyStateBorder" Style="{StaticResource CardStyle}" VerticalAlignment="Center" HorizontalAlignment="Center" Width="360" Padding="32" Margin="0,40,0,0" Visibility="Collapsed">
-                    <StackPanel HorizontalAlignment="Center">
-                        <TextBlock Text="🔔" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,12"/>
-                        <TextBlock Text="还没有提醒事项" Style="{StaticResource Header2TextStyle}" HorizontalAlignment="Center" Margin="0,0,0,4"/>
-                        <TextBlock Text="添加重要的生日、纪念日，避免遗忘。" Style="{StaticResource CaptionTextStyle}" HorizontalAlignment="Center" Margin="0,0,0,16"/>
-                        <Button Content="创建第一个提醒" Style="{StaticResource ModernButton}" HorizontalAlignment="Center" Click="AddReminderButton_Click"/>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </ScrollViewer>
-    </Grid>
 
     <!-- DataTemplate for Reminder Item -->
     <UserControl.Resources>
@@ -91,7 +24,14 @@
                                 <TextBlock Text="{Binding ReminderType}" Style="{StaticResource CaptionTextStyle}" FontSize="11"/>
                             </Border>
                         </StackPanel>
-                        <TextBlock Text="{Binding Month, StringFormat='{}每年 {0} 月 {1} 日', ConverterParameter={Binding Day}}" Style="{StaticResource CaptionTextStyle}" Margin="0,4,0,0"/>
+                        <TextBlock Style="{StaticResource CaptionTextStyle}" Margin="0,4,0,0">
+                            <TextBlock.Text>
+                                <MultiBinding StringFormat="{}每年 {0} 月 {1} 日">
+                                    <Binding Path="Month"/>
+                                    <Binding Path="Day"/>
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
                     </StackPanel>
 
                     <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="16,0">
@@ -107,4 +47,72 @@
             </Border>
         </DataTemplate>
     </UserControl.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/> <!-- Header -->
+            <RowDefinition Height="*"/>    <!-- Reminders List -->
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Grid Grid.Row="0" Margin="0,0,0,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="🔔 提醒事项" Style="{StaticResource Header1TextStyle}"/>
+                <TextBlock Text="管理重要日期、倒计时与生日提醒，自动推送到 Windows 通知栏" Style="{StaticResource SubHeaderTextStyle}" Margin="0,4,0,0"/>
+            </StackPanel>
+            <Button x:Name="AddReminderButton" Grid.Column="1" Content="+ 新建提醒" Style="{StaticResource ModernButton}" Width="130" Click="AddReminderButton_Click"/>
+        </Grid>
+
+        <!-- Grouped Reminders Content -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <!-- Group 1: Today Reminders -->
+                <Border x:Name="TodayHeaderBorder" Margin="0,0,0,8" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🔥 今天到期的提醒" Style="{StaticResource Header2TextStyle}" Foreground="{DynamicResource DangerBrush}"/>
+                        <Border x:Name="TodayBadgeBorder" Background="{DynamicResource DangerBrush}" CornerRadius="10" Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="TodayBadgeText" Text="0" Foreground="White" FontSize="11" FontWeight="Bold"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+                <ItemsControl x:Name="TodayItemsControl" ItemTemplate="{StaticResource ReminderItemTemplate}" Margin="0,0,0,16"/>
+
+                <!-- Group 2: Upcoming Reminders (30 Days) -->
+                <Border x:Name="UpcomingHeaderBorder" Margin="0,8,0,8" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="⏳ 近期（30天内）提醒" Style="{StaticResource Header2TextStyle}" Foreground="{DynamicResource WarningBrush}"/>
+                        <Border x:Name="UpcomingBadgeBorder" Background="{DynamicResource WarningBrush}" CornerRadius="10" Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="UpcomingBadgeText" Text="0" Foreground="White" FontSize="11" FontWeight="Bold"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+                <ItemsControl x:Name="UpcomingItemsControl" ItemTemplate="{StaticResource ReminderItemTemplate}" Margin="0,0,0,16"/>
+
+                <!-- Group 3: Later Reminders -->
+                <Border x:Name="LaterHeaderBorder" Margin="0,8,0,8" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="📅 以后提醒" Style="{StaticResource Header2TextStyle}"/>
+                        <Border x:Name="LaterBadgeBorder" Background="{DynamicResource SurfaceSecondaryBackground}" CornerRadius="10" Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="LaterBadgeText" Text="0" Style="{StaticResource CaptionTextStyle}" FontSize="11" FontWeight="Bold"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+                <ItemsControl x:Name="LaterItemsControl" ItemTemplate="{StaticResource ReminderItemTemplate}" Margin="0,0,0,16"/>
+
+                <!-- Empty State -->
+                <Border x:Name="EmptyStateBorder" Style="{StaticResource CardStyle}" VerticalAlignment="Center" HorizontalAlignment="Center" Width="360" Padding="32" Margin="0,40,0,0" Visibility="Collapsed">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="🔔" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                        <TextBlock Text="还没有设置提醒" Style="{StaticResource Header2TextStyle}" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                        <TextBlock Text="添加生日、纪念日或重要日程，定时推送到 Windows 通知。" Style="{StaticResource CaptionTextStyle}" HorizontalAlignment="Center" Margin="0,0,0,16"/>
+                        <Button Content="创建第一个提醒" Style="{StaticResource ModernButton}" HorizontalAlignment="Center" Click="AddReminderButton_Click"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
 </UserControl>

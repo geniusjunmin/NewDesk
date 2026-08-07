@@ -40,17 +40,17 @@ public partial class RemindersView : UserControl
             TodayItemsControl.ItemTemplate = itemTemplate;
             TodayItemsControl.ItemsSource = todayList;
             TodayBadgeText.Text = todayList.Count.ToString();
-            TodayGroupPanel.Visibility = todayList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            TodayHeaderBorder.Visibility = todayList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
             UpcomingItemsControl.ItemTemplate = itemTemplate;
             UpcomingItemsControl.ItemsSource = upcomingList;
             UpcomingBadgeText.Text = upcomingList.Count.ToString();
-            UpcomingGroupPanel.Visibility = upcomingList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            UpcomingHeaderBorder.Visibility = upcomingList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
             LaterItemsControl.ItemTemplate = itemTemplate;
             LaterItemsControl.ItemsSource = laterList;
             LaterBadgeText.Text = laterList.Count.ToString();
-            LaterGroupPanel.Visibility = laterList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            LaterHeaderBorder.Visibility = laterList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
             EmptyStateBorder.Visibility = _reminders.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
