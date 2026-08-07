@@ -29,6 +29,8 @@ public class TextElementState
     public bool Underline { get; set; } = false;
     public string Alignment { get; set; } = "Left"; // "Left", "Center", "Right"
     public int ZIndex { get; set; } = 0;
+    public bool IsLocked { get; set; } = false;
+    public bool IsVisible { get; set; } = true;
 
     // Advanced Visual Effects
     public bool ShadowEnabled { get; set; } = false;

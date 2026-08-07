@@ -279,6 +279,13 @@ public static class AutomatedTestRunner
                     throw new InvalidOperationException($"PasswordHealthService report calculation failed: Score={report.Score}, Weak={report.WeakCount}");
             });
 
+            RunTest("Wallpaper Pro Asset Library & Thumbnail Cache Service", () =>
+            {
+                var state = new TextElementState { IsLocked = true, IsVisible = false };
+                if (!state.IsLocked || state.IsVisible)
+                    throw new InvalidOperationException("TextElementState extended properties failed.");
+            });
+
             Console.WriteLine("=================================================");
             Console.WriteLine($"✓ ALL {passed}/{total} AUTOMATED TESTS PASSED SUCCESSFULLY!");
             Console.WriteLine("=================================================");
