@@ -15,6 +15,9 @@ public partial class ReminderEditorWindow : Window
         InitializeComponent();
         Reminder = reminder;
 
+        WindowTitleText.Text = string.IsNullOrEmpty(Reminder.Title) ? "新建提醒事项" : "编辑提醒事项";
+        Title = WindowTitleText.Text;
+
         TitleTextBox.Text = Reminder.Title;
         DaysInAdvanceTextBox.Text = Reminder.DaysInAdvance.ToString();
         
@@ -28,10 +31,10 @@ public partial class ReminderEditorWindow : Window
         
         // Set initial values
         TypeComboBox.SelectedIndex = Reminder.IsLunar ? 1 : 0;
-        MonthComboBox.SelectedItem = Reminder.Month;
+        MonthComboBox.SelectedItem = Reminder.Month > 0 ? Reminder.Month : 1;
         
         UpdateDayComboBox();
-        DayComboBox.SelectedItem = Reminder.Day;
+        DayComboBox.SelectedItem = Reminder.Day > 0 ? Reminder.Day : 1;
     }
 
     private void UpdateDayComboBox()
@@ -45,12 +48,10 @@ public partial class ReminderEditorWindow : Window
         int maxDays;
         if (isLunar)
         {
-            // Lunar months are 29 or 30 days. To be safe/simple for selection, allow 30.
             maxDays = 30;
         }
         else
         {
-            // Gregorian days in month
             try
             {
                 maxDays = DateTime.DaysInMonth(DateTime.Now.Year, month);
@@ -67,7 +68,6 @@ public partial class ReminderEditorWindow : Window
             DayComboBox.Items.Add(i);
         }
 
-        // Restore selection if valid, otherwise select latest possible
         if (currentDay <= maxDays)
             DayComboBox.SelectedItem = currentDay;
         else
@@ -94,7 +94,7 @@ public partial class ReminderEditorWindow : Window
 
         if (MonthComboBox.SelectedItem == null || DayComboBox.SelectedItem == null)
         {
-            ToastManager.Show("提示", "请选择完整的月份和日期", ToastType.Warning) ;
+            ToastManager.Show("提示", "请选择完整的月份和日期", ToastType.Warning);
             return;
         }
 
@@ -104,7 +104,7 @@ public partial class ReminderEditorWindow : Window
             return;
         }
 
-        Reminder.Title = TitleTextBox.Text;
+        Reminder.Title = TitleTextBox.Text.Trim();
         Reminder.IsLunar = TypeComboBox.SelectedIndex == 1;
         Reminder.Month = (int)MonthComboBox.SelectedItem;
         Reminder.Day = (int)DayComboBox.SelectedItem;

@@ -40,7 +40,11 @@ public partial class WallpaperEditorWindow : Window
     private string? _backgroundImagePath;
     private List<WallpaperState> _wallpaperStates = new();
 
-    public WallpaperEditorWindow()
+    public WallpaperEditorWindow() : this(null)
+    {
+    }
+
+    public WallpaperEditorWindow(WallpaperState? state)
     {
         InitializeComponent();
         LoadSystemFonts();

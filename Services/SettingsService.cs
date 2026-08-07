@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Text.Json;
 using NewDesk.Models;
@@ -6,36 +7,46 @@ namespace NewDesk.Services;
 
 public static class SettingsService
 {
-    private static readonly string SettingsFilePath = Path.Combine(AppContext.BaseDirectory, "app_settings.json");
-
     public static AppSettings LoadSettings()
     {
-        if (!File.Exists(SettingsFilePath))
+        AppDataPath.Initialize();
+        string path = AppDataPath.SettingsFile;
+        if (!File.Exists(path))
         {
-            return new AppSettings();
+            string oldPath = Path.Combine(AppContext.BaseDirectory, "app_settings.json");
+            if (File.Exists(oldPath))
+            {
+                path = oldPath;
+            }
+            else
+            {
+                return new AppSettings();
+            }
         }
 
         try
         {
-            string json = File.ReadAllText(SettingsFilePath);
+            string json = File.ReadAllText(path);
             return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
         }
-        catch
+        catch (Exception ex)
         {
+            AppDataPath.LogError("SettingsService.LoadSettings", ex);
             return new AppSettings();
         }
     }
 
     public static void SaveSettings(AppSettings settings)
     {
+        AppDataPath.Initialize();
         try
         {
             string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(SettingsFilePath, json);
+            File.WriteAllText(AppDataPath.SettingsFile, json);
         }
-        catch
+        catch (Exception ex)
         {
-            // Handle error
+            AppDataPath.LogError("SettingsService.SaveSettings", ex);
         }
     }
 }

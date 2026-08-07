@@ -1,5 +1,9 @@
 using System;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using NewDesk.Models;
 using NewDesk.Services;
@@ -14,155 +18,141 @@ public partial class PasswordEditorWindow : Window
     {
         InitializeComponent();
         PasswordEntry = passwordEntry;
-        
-        try
-        {
-            TitleTextBox.Text = PasswordEntry.Title;
-            UsernameTextBox.Text = PasswordEntry.Username;
-            NotesTextBox.Text = PasswordEntry.Notes;
-            PasswordBox.Password = PasswordEntry.Password;
-            
-            // 窗口加载完成后调整大小
-            Loaded += (s, e) =>
-            {
-                UpdateWindowSize();
-            };
-        }
-        catch (Exception ex)
-        {
-            Services.ToastManager.Show("错误", $"初始化窗口时发生错误: {ex.Message}", Services.ToastType.Error);
-        }
-    }
 
-    private void UpdateWindowSize()
-    {
-        try
-        {
-            // 强制布局更新
-            MainGrid.UpdateLayout();
-            
-            // 测量所有控件的高度
-            double totalHeight = 0;
-            
-            // 标题
-            totalHeight += 20; // 标题高度
-            totalHeight += 20; // 标题下边距
-            
-            // 标题输入
-            TitlePanel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            totalHeight += TitlePanel.DesiredSize.Height;
-            totalHeight += 16; // 下边距
-            
-            // 用户名输入
-            UsernamePanel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            totalHeight += UsernamePanel.DesiredSize.Height;
-            totalHeight += 16; // 下边距
-            
-            // 密码输入
-            PasswordPanel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            totalHeight += PasswordPanel.DesiredSize.Height;
-            totalHeight += 16; // 下边距
-            
-            // 密码选项
-            OptionsPanel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            totalHeight += OptionsPanel.DesiredSize.Height;
-            totalHeight += 16; // 下边距
-            
-            // 备注输入
-            NotesPanel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            totalHeight += NotesPanel.DesiredSize.Height;
-            totalHeight += 20; // 下边距
-            
-            // 按钮区域
-            ButtonPanel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            totalHeight += ButtonPanel.DesiredSize.Height;
-            totalHeight += 8; // 上边距
-            
-            // 添加 Grid 和 Border 的边距
-            totalHeight += 48; // Grid Margin (24 * 2)
-            totalHeight += 16; // Border Margin (8 * 2)
-            totalHeight += 30; // 窗口标题栏和边框
-            
-            // 设置窗口高度，确保在合理范围内
-            Height = Math.Max(500, Math.Min(900, totalHeight));
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Failed to update window size: {ex.Message}");
-            // 如果计算失败，使用默认高度
-            if (Height < 500)
-            {
-                Height = 580;
-            }
-        }
+        WindowTitleText.Text = string.IsNullOrEmpty(PasswordEntry.Title) ? "添加密码" : "编辑密码";
+        Title = WindowTitleText.Text;
+
+        TitleTextBox.Text = PasswordEntry.Title;
+        UsernameTextBox.Text = PasswordEntry.Username;
+        NotesTextBox.Text = PasswordEntry.Notes;
+        PasswordBox.Password = PasswordEntry.Password;
+        PasswordTextBox.Text = PasswordEntry.Password;
+
+        UpdatePasswordStrength(PasswordEntry.Password);
     }
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        try
+        string pwd = ShowPasswordCheckBox.IsChecked == true ? PasswordTextBox.Text : PasswordBox.Password;
+        if (string.IsNullOrWhiteSpace(TitleTextBox.Text))
         {
-            PasswordEntry.Title = TitleTextBox.Text;
-            PasswordEntry.Username = UsernameTextBox.Text;
-            PasswordEntry.Notes = NotesTextBox.Text;
-            PasswordEntry.Password = (ShowPasswordCheckBox.IsChecked == true) ? PasswordTextBox.Text : PasswordBox.Password;
+            ToastManager.Show("提示", "请输入密码名称或平台。", ToastType.Warning);
+            TitleTextBox.Focus();
+            return;
+        }
 
-            DialogResult = true;
-        }
-        catch (Exception ex)
-        {
-            Services.ToastManager.Show("错误", $"保存密码时发生错误: {ex.Message}", Services.ToastType.Error);
-        }
+        PasswordEntry.Title = TitleTextBox.Text.Trim();
+        PasswordEntry.Username = UsernameTextBox.Text.Trim();
+        PasswordEntry.Notes = NotesTextBox.Text;
+        PasswordEntry.Password = pwd;
+
+        DialogResult = true;
+        Close();
     }
 
     private void ShowPasswordCheckBox_Changed(object sender, RoutedEventArgs e)
     {
-        try
+        bool show = ShowPasswordCheckBox.IsChecked == true;
+        if (show)
         {
-            if (ShowPasswordCheckBox.IsChecked == true)
-            {
-                // 切换到显示密码模式
-                PasswordTextBox.Text = PasswordBox.Password;
-                PasswordTextBox.Visibility = Visibility.Visible;
-                PasswordBox.Visibility = Visibility.Collapsed;
-            }
-            else
-            {
-                // 切换到隐藏密码模式
-                PasswordBox.Password = PasswordTextBox.Text;
-                PasswordTextBox.Visibility = Visibility.Collapsed;
-                PasswordBox.Visibility = Visibility.Visible;
-            }
-            
-            // 延迟更新窗口大小，确保布局已完成
-            Dispatcher.BeginInvoke(new Action(() =>
-            {
-                UpdateWindowSize();
-            }), System.Windows.Threading.DispatcherPriority.Loaded);
+            PasswordTextBox.Text = PasswordBox.Password;
+            PasswordTextBox.Visibility = Visibility.Visible;
+            PasswordBox.Visibility = Visibility.Collapsed;
         }
-        catch (Exception ex)
+        else
         {
-            System.Diagnostics.Debug.WriteLine($"Error in ShowPasswordCheckBox_Changed: {ex.Message}");
-            Services.ToastManager.Show("错误", $"切换密码显示时发生错误: {ex.Message}", Services.ToastType.Error);
+            PasswordBox.Password = PasswordTextBox.Text;
+            PasswordBox.Visibility = Visibility.Visible;
+            PasswordTextBox.Visibility = Visibility.Collapsed;
         }
     }
 
     private void CopyButton_Click(object sender, RoutedEventArgs e)
     {
-        try
+        string pwd = ShowPasswordCheckBox.IsChecked == true ? PasswordTextBox.Text : PasswordBox.Password;
+        if (string.IsNullOrEmpty(pwd))
         {
-            var password = (ShowPasswordCheckBox.IsChecked == true) ? PasswordTextBox.Text : PasswordBox.Password;
-            if (string.IsNullOrEmpty(password))
-            {
-                Services.ToastManager.Show("提示", "密码为空，无法复制。", Services.ToastType.Warning);
-                return;
-            }
-            
-            Clipboard.SetText(password);
-            Services.ToastManager.Show("成功", "密码已复制到剪贴板。", Services.ToastType.Success);
+            ToastManager.Show("提示", "密码为空，无法复制。", ToastType.Warning);
+            return;
         }
-        catch (Exception ex)
+
+        Clipboard.SetText(pwd);
+        ToastManager.Show("成功", "密码已复制到剪贴板。", ToastType.Success);
+    }
+
+    private void GeneratePasswordButton_Click(object sender, RoutedEventArgs e)
+    {
+        string newPwd = GenerateStrongPassword(16);
+        PasswordBox.Password = newPwd;
+        PasswordTextBox.Text = newPwd;
+        UpdatePasswordStrength(newPwd);
+        ToastManager.Show("随机密码", "已为您生成 16 位强随机密码！", ToastType.Success);
+    }
+
+    private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+    {
+        if (ShowPasswordCheckBox.IsChecked != true)
         {
-            Services.ToastManager.Show("错误", $"复制密码时发生错误: {ex.Message}", Services.ToastType.Error);
+            UpdatePasswordStrength(PasswordBox.Password);
         }
+    }
+
+    private void PasswordTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (ShowPasswordCheckBox.IsChecked == true)
+        {
+            UpdatePasswordStrength(PasswordTextBox.Text);
+        }
+    }
+
+    private void UpdatePasswordStrength(string pwd)
+    {
+        if (string.IsNullOrEmpty(pwd))
+        {
+            StrengthProgressBar.Value = 0;
+            StrengthText.Text = "未输入";
+            StrengthText.Foreground = (Brush)FindResource("TextSecondary");
+            return;
+        }
+
+        int score = 0;
+        if (pwd.Length >= 8) score += 25;
+        if (pwd.Length >= 14) score += 25;
+        if (Regex.IsMatch(pwd, @"[a-z]") && Regex.IsMatch(pwd, @"[A-Z]")) score += 25;
+        if (Regex.IsMatch(pwd, @"[0-9]") && Regex.IsMatch(pwd, @"[^a-zA-Z0-9]")) score += 25;
+
+        StrengthProgressBar.Value = score;
+        if (score <= 25)
+        {
+            StrengthText.Text = "较弱";
+            StrengthText.Foreground = (Brush)FindResource("DangerBrush");
+        }
+        else if (score <= 50)
+        {
+            StrengthText.Text = "一般";
+            StrengthText.Foreground = (Brush)FindResource("WarningBrush");
+        }
+        else if (score <= 75)
+        {
+            StrengthText.Text = "良好";
+            StrengthText.Foreground = (Brush)FindResource("PrimaryBrush");
+        }
+        else
+        {
+            StrengthText.Text = "强";
+            StrengthText.Foreground = (Brush)FindResource("SuccessBrush");
+        }
+    }
+
+    private static string GenerateStrongPassword(int length)
+    {
+        const string chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=";
+        var sb = new StringBuilder();
+        var bytes = RandomNumberGenerator.GetBytes(length);
+        foreach (byte b in bytes)
+        {
+            sb.Append(chars[b % chars.Length]);
+        }
+        return sb.ToString();
     }
 }

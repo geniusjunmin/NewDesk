@@ -99,7 +99,7 @@ public static class WallpaperService
         _rotationList.Clear();
     }
 
-    private static async Task RotateNextAsync()
+    public static async Task RotateNextAsync()
     {
         try
         {

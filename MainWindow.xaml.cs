@@ -1,59 +1,105 @@
 using System;
-using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Microsoft.Win32;
+using NewDesk.Dialogs;
 using NewDesk.Models;
 using NewDesk.Services;
+using NewDesk.Views;
 
 namespace NewDesk;
 
 public partial class MainWindow : Window
 {
-    private List<PasswordEntry> _passwords = new();
-    private List<Reminder> _reminders = new();
-    private GlobalHotkeyService? _hotkeyService;
     private AppSettings _settings = new();
-    private bool _isMasterPasswordVerified = false;
+    private GlobalHotkeyService? _hotkeyService;
+    private DispatcherTimer? _autoLockTimer;
+
+    private readonly HomeView _homeView = new();
+    private readonly PasswordsView _passwordsView = new();
+    private readonly RemindersView _remindersView = new();
+    private readonly WallpapersView _wallpapersView = new();
+    private readonly DynamicInfoView _dynamicInfoView = new();
+    private readonly SettingsView _settingsView = new();
+    private readonly HelpView _helpView = new();
 
     public MainWindow()
     {
         InitializeComponent();
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
-        
-        // Set icon after initialization
-        try
-        {
-            var iconSource = IconService.GetIconSource();
-            this.Icon = iconSource;
-            MyNotifyIcon.IconSource = iconSource;
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Failed to set icon: {ex.Message}");
-        }
+
+        // Hook Window Lock / Session Switch event
+        SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
+
+        // View event bindings
+        _homeView.RequestAddPassword += (s, e) => NavigateTo("Passwords", addPassword: true);
+        _homeView.RequestAddReminder += (s, e) => NavigateTo("Reminders", addReminder: true);
+        _homeView.RequestNavigateToWallpaper += (s, e) => NavigateTo("Wallpaper");
+
+        _settingsView.RequestRerunWizard += (s, e) => RunSetupWizard();
+
+        // Key bindings (Ctrl+F, Ctrl+N, Ctrl+,)
+        KeyDown += MainWindow_KeyDown;
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         try
         {
-            LoadSettings();
-            LoadReminders();
-            
-            // Initialize display change listener
+            // Initialize AppDataPath & Load settings
+            AppDataPath.Initialize();
+            _settings = SettingsService.LoadSettings();
+
+            // Apply Theme
+            ThemeManager.ApplyTheme(_settings.Theme);
+
+            // Check First Run / Setup Wizard
+            string[] args = Environment.GetCommandLineArgs();
+            bool isAutostart = args.Any(a => a.Equals("--startup", StringComparison.OrdinalIgnoreCase));
+
+            if (!_settings.HasCompletedSetupWizard)
+            {
+                if (!DataService.AnyDataExists())
+                {
+                    // Brand new user -> Launch Setup Wizard
+                    bool? result = RunSetupWizard();
+                    if (result != true)
+                    {
+                        // User cancelled wizard -> shutdown or continue
+                    }
+                }
+                else
+                {
+                    // Existing user upgrading -> mark wizard complete
+                    _settings.HasCompletedSetupWizard = true;
+                    SettingsService.SaveSettings(_settings);
+                }
+            }
+
+            // Navigation visibility based on feature toggles
+            UpdateFeatureVisibility();
+
+            // Navigate to Home View by default
+            NavigateTo("Home");
+
+            // Load Reminders & Wallpaper services
+            var reminders = DataService.LoadReminders();
+            ReminderService.Start(reminders, _settings.ReminderFrequency);
+
             WallpaperService.InitializeDisplaySettingsListener();
-            
-            // Setup hotkey after window is fully loaded and handle is created
+            StartWallpaperService();
+
+            // Setup Hotkey
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 try
                 {
-                    // Ensure window handle is created
                     var helper = new System.Windows.Interop.WindowInteropHelper(this);
                     if (helper.Handle == IntPtr.Zero)
                     {
@@ -63,437 +109,191 @@ public partial class MainWindow : Window
                 }
                 catch (Exception ex)
                 {
-                    // Log error but don't crash
-                    System.Diagnostics.Debug.WriteLine($"Failed to setup hotkey: {ex.Message}");
+                    AppDataPath.LogError("MainWindow.SetupHotkey", ex);
                 }
-            }), System.Windows.Threading.DispatcherPriority.Loaded);
-            
-            StartReminderService();
-            
-            // Always hide to system tray on startup as per user request
-            Hide();
+            }), DispatcherPriority.Loaded);
 
-            // Start Wallpaper Service (Single or Rotation)
-            try
+            // Startup Window state logic
+            if (isAutostart && _settings.StartupBehavior == StartupBehavior.Tray)
             {
-                string wallpapersPath = System.IO.Path.Combine(AppContext.BaseDirectory, "wallpapers.json");
-                if (System.IO.File.Exists(wallpapersPath))
-                {
-                    string json = System.IO.File.ReadAllText(wallpapersPath);
-                    var wallpaperStates = System.Text.Json.JsonSerializer.Deserialize<List<NewDesk.Models.WallpaperState>>(json);
-                    
-                    if (wallpaperStates != null && wallpaperStates.Count > 0)
-                    {
-                        if (_settings.IsWallpaperRotationEnabled)
-                        {
-                            NewDesk.Services.WallpaperService.StartRotation(wallpaperStates, _settings.WallpaperRotationIntervalMinutes, _settings.WallpaperRotationMode);
-                        }
-                        else if (!string.IsNullOrEmpty(_settings.CurrentWallpaperName))
-                        {
-                            var state = wallpaperStates.FirstOrDefault(w => w.Name == _settings.CurrentWallpaperName);
-                            if (state != null)
-                            {
-                                NewDesk.Services.WallpaperService.StartAutoRefresh(state);
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Failed to start wallpaper service: {ex.Message}");
-            }
-        }
-        catch (Exception ex)
-        {
-            Services.ToastManager.Show("错误", $"应用启动时发生错误: {ex.Message}", Services.ToastType.Error);
-            Application.Current.Shutdown();
-        }
-    }
-
-    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
-    {
-        e.Cancel = true;
-        Hide();
-    }
-
-    public void ShowWindow()
-    {
-        if (EnsureMasterPasswordVerified())
-        {
-            Show();
-            WindowState = WindowState.Normal;
-            Activate();
-        }
-    }
-
-    private bool EnsureMasterPasswordVerified()
-    {
-        if (_isMasterPasswordVerified) return true;
-
-        try
-        {
-            if (DataService.PasswordFileExists())
-            {
-                var masterPasswordWindow = new MasterPasswordWindow(false);
-                if (masterPasswordWindow.ShowDialog() == true)
-                {
-                    DataService.MasterPassword = masterPasswordWindow.Password;
-                    // Attempt to load passwords to verify the master password
-                    LoadPasswords();
-                    _isMasterPasswordVerified = true;
-                    return true;
-                }
+                Hide();
             }
             else
             {
-                // First time setup
-                var masterPasswordWindow = new MasterPasswordWindow(true);
-                if (masterPasswordWindow.ShowDialog() == true)
-                {
-                    DataService.MasterPassword = masterPasswordWindow.Password;
-                    // For first time, we still need to initialize the file or just mark as verified
-                    // LoadPasswords will return empty but valid
-                    LoadPasswords();
-                    _isMasterPasswordVerified = true;
-                    return true;
-                }
+                Show();
+                WindowState = WindowState.Normal;
+                Activate();
             }
-        }
-        catch (CryptographicException)
-        {
-            Services.ToastManager.Show("错误", "主密码错误，无法解锁。", Services.ToastType.Error);
-            DataService.MasterPassword = null; // Reset for next attempt
+
+            // Start Inactivity Auto-Lock Timer if configured
+            ResetAutoLockTimer();
         }
         catch (Exception ex)
         {
-            Services.ToastManager.Show("错误", $"验证主密码时发生错误: {ex.Message}", Services.ToastType.Error);
+            AppDataPath.LogError("MainWindow_Loaded", ex);
+            ToastManager.Show("启动提示", $"初始化发生问题: {ex.Message}", ToastType.Warning);
         }
-
-        return false;
     }
 
-    private void ShowWindow_Click(object sender, RoutedEventArgs e)
+    private bool? RunSetupWizard()
     {
-        ShowWindow();
-    }
-
-    private void Exit_Click(object sender, RoutedEventArgs e)
-    {
-        ReminderService.Stop();
-        _hotkeyService?.Dispose();
-        Application.Current.Shutdown();
-    }
-
-    private void LoadSettings()
-    {
-        try
+        var wizard = new SetupWizardWindow(_settings) { Owner = this };
+        bool? result = wizard.ShowDialog();
+        if (result == true)
         {
             _settings = SettingsService.LoadSettings();
-            if (StartupCheckBox != null)
-            {
-                StartupCheckBox.IsChecked = IsStartupEnabled();
-            }
-            if (ReminderFrequencyComboBox != null && ReminderFrequencyComboBox.Items.Count > 0)
-            {
-                var index = (int)_settings.ReminderFrequency;
-                if (index >= 0 && index < ReminderFrequencyComboBox.Items.Count)
-                {
-                    ReminderFrequencyComboBox.SelectedIndex = index;
-                }
-            }
+            UpdateFeatureVisibility();
+            NavigateTo("Home");
+            ToastManager.Show("欢迎使用", " NewDesk 已成功完成配置！", ToastType.Success);
         }
-        catch (Exception ex)
+        return result;
+    }
+
+    private void UpdateFeatureVisibility()
+    {
+        NavPasswordsRadio.Visibility = _settings.EnablePasswords ? Visibility.Visible : Visibility.Collapsed;
+        NavRemindersRadio.Visibility = _settings.EnableReminders ? Visibility.Visible : Visibility.Collapsed;
+        NavWallpaperRadio.Visibility = _settings.EnableWallpaper ? Visibility.Visible : Visibility.Collapsed;
+        NavDynamicInfoRadio.Visibility = _settings.EnableDynamicInfo ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void NavRadio_Checked(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton radio && radio.Tag is string tag)
         {
-            System.Diagnostics.Debug.WriteLine($"Failed to load settings: {ex.Message}");
-            _settings = new AppSettings();
+            NavigateTo(tag);
         }
     }
 
-    private void LoadPasswords()
+    public void NavigateTo(string target, bool addPassword = false, bool addReminder = false)
     {
-        try
+        UserControl targetView = target switch
         {
-            _passwords = DataService.LoadPasswords();
-            RefreshPasswordList();
-        }
-        catch (CryptographicException ex)
-        {
-            Services.ToastManager.Show("错误", "主密码错误，无法加载密码数据。", Services.ToastType.Error);
-            System.Diagnostics.Debug.WriteLine($"CryptographicException: {ex.Message}");
-        }
-        catch (Exception ex)
-        {
-            Services.ToastManager.Show("错误", $"加载密码数据时发生错误: {ex.Message}", Services.ToastType.Error);
-            System.Diagnostics.Debug.WriteLine($"Exception in LoadPasswords: {ex.Message}\n{ex.StackTrace}");
-        }
-    }
-
-    private void RefreshPasswordList()
-    {
-        try
-        {
-            if (PasswordListView != null)
-            {
-                PasswordListView.ItemsSource = null;
-                PasswordListView.ItemsSource = _passwords;
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Failed to refresh password list: {ex.Message}");
-        }
-    }
-
-    private void LoadReminders()
-    {
-        _reminders = DataService.LoadReminders();
-        RefreshReminderList();
-    }
-
-    private void RefreshReminderList()
-    {
-        try
-        {
-            if (ReminderListView != null)
-            {
-                ReminderListView.ItemsSource = null;
-                ReminderListView.ItemsSource = _reminders;
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Failed to refresh reminder list: {ex.Message}");
-        }
-    }
-
-    private void SearchTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
-    {
-        if (SearchPlaceholder != null)
-        {
-            SearchPlaceholder.Visibility = string.IsNullOrEmpty(SearchTextBox.Text) ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        var searchText = SearchTextBox.Text.ToLower();
-        if (string.IsNullOrWhiteSpace(searchText))
-        {
-            RefreshPasswordList();
-            return;
-        }
-        PasswordListView.ItemsSource = _passwords.Where(p =>
-            p.Title.ToLower().Contains(searchText) ||
-            p.Username.ToLower().Contains(searchText) ||
-            p.Notes.ToLower().Contains(searchText)
-        );
-    }
-
-    private void SearchTextBox_GotFocus(object sender, RoutedEventArgs e)
-    {
-        SearchPlaceholder.Visibility = Visibility.Collapsed;
-    }
-
-    private void SearchTextBox_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (string.IsNullOrEmpty(SearchTextBox.Text))
-        {
-            SearchPlaceholder.Visibility = Visibility.Visible;
-        }
-    }
-
-    private void PasswordListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        EditButton_Click(sender, e);
-    }
-
-    private void AddButton_Click(object sender, RoutedEventArgs e)
-    {
-        var newEntry = new PasswordEntry { Id = Guid.NewGuid() };
-        var editor = new PasswordEditorWindow(newEntry);
-        if (editor.ShowDialog() == true)
-        {
-            _passwords.Add(editor.PasswordEntry);
-            DataService.SavePasswords(_passwords);
-            RefreshPasswordList();
-        }
-    }
-
-    private void EditButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (PasswordListView.SelectedItem is PasswordEntry selected)
-        {
-            var editor = new PasswordEditorWindow(selected);
-            if (editor.ShowDialog() == true)
-            {
-                DataService.SavePasswords(_passwords);
-                RefreshPasswordList();
-            }
-        }
-        else
-        {
-            Services.ToastManager.Show("提示", "请先选择一个密码条目。", Services.ToastType.Warning);
-        }
-    }
-
-    private void DeleteButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (PasswordListView.SelectedItem is PasswordEntry selected)
-        {
-            if (MessageBox.Show("确定要删除这个密码条目吗？", "确认", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
-            {
-                _passwords.Remove(selected);
-                DataService.SavePasswords(_passwords);
-                RefreshPasswordList();
-            }
-        }
-        else
-        {
-            Services.ToastManager.Show("提示", "请先选择一个密码条目。", Services.ToastType.Warning);
-        }
-    }
-
-    private void ImportLegacyButton_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            int count = DataService.ImportLegacyPasswords();
-            LoadPasswords();
-            Services.ToastManager.Show("成功", $"成功导入 {count} 个密码条目。", Services.ToastType.Success);
-        }
-        catch (Exception ex)
-        {
-            Services.ToastManager.Show("错误", $"导入失败: {ex.Message}", Services.ToastType.Error);
-        }
-    }
-
-    private void AddReminderButton_Click(object sender, RoutedEventArgs e)
-    {
-        var newReminder = new Reminder
-        {
-            Id = Guid.NewGuid(),
-            Month = DateTime.Now.Month,
-            Day = DateTime.Now.Day
+            "Home" => _homeView,
+            "Passwords" => _passwordsView,
+            "Reminders" => _remindersView,
+            "Wallpaper" => _wallpapersView,
+            "DynamicInfo" => _dynamicInfoView,
+            "Settings" => _settingsView,
+            "Help" => _helpView,
+            _ => _homeView
         };
-        var editor = new ReminderEditorWindow(newReminder);
-        if (editor.ShowDialog() == true)
+
+        MainContentControl.Content = targetView;
+
+        // Sync RadioButton state
+        if (target == "Home") NavHomeRadio.IsChecked = true;
+        else if (target == "Passwords") NavPasswordsRadio.IsChecked = true;
+        else if (target == "Reminders") NavRemindersRadio.IsChecked = true;
+        else if (target == "Wallpaper") NavWallpaperRadio.IsChecked = true;
+        else if (target == "DynamicInfo") NavDynamicInfoRadio.IsChecked = true;
+        else if (target == "Settings") NavSettingsRadio.IsChecked = true;
+        else if (target == "Help") NavHelpRadio.IsChecked = true;
+
+        UpdateSidebarVaultStatus();
+
+        if (target == "Home")
         {
-            _reminders.Add(editor.Reminder);
-            DataService.SaveReminders(_reminders);
-            RefreshReminderList();
-            ReminderService.Start(_reminders, _settings.ReminderFrequency);
+            _homeView.RefreshDashboard();
+        }
+        else if (target == "Passwords")
+        {
+            _passwordsView.CheckVaultStateAndLoad();
+            if (addPassword) _passwordsView.ShowAddPasswordDialog();
+        }
+        else if (target == "Reminders")
+        {
+            _remindersView.LoadReminders();
+            if (addReminder) _remindersView.ShowAddReminderDialog();
+        }
+        else if (target == "Wallpaper")
+        {
+            _wallpapersView.LoadData();
         }
     }
 
-    private void EditReminderButton_Click(object sender, RoutedEventArgs e)
+    public void UpdateSidebarVaultStatus()
     {
-        if (ReminderListView.SelectedItem is Reminder selected)
+        if (!string.IsNullOrEmpty(DataService.MasterPassword))
         {
-            var editor = new ReminderEditorWindow(selected);
-            if (editor.ShowDialog() == true)
-            {
-                DataService.SaveReminders(_reminders);
-                RefreshReminderList();
-                ReminderService.Start(_reminders, _settings.ReminderFrequency);
-            }
+            SidebarLockIconText.Text = "🔓";
+            SidebarLockStatusText.Text = "密码库已解锁";
+            SidebarLockStatusText.Foreground = (System.Windows.Media.Brush)FindResource("SuccessBrush");
         }
         else
         {
-            Services.ToastManager.Show("提示", "请先选择一个提醒条目。", Services.ToastType.Warning);
+            SidebarLockIconText.Text = "🔒";
+            SidebarLockStatusText.Text = "密码库已锁定";
+            SidebarLockStatusText.Foreground = (System.Windows.Media.Brush)FindResource("WarningBrush");
         }
     }
 
-    private void DeleteReminderButton_Click(object sender, RoutedEventArgs e)
+    private void MainWindow_KeyDown(object sender, KeyEventArgs e)
     {
-        if (ReminderListView.SelectedItem is Reminder selected)
+        // Global Keyboard UX
+        if (Keyboard.Modifiers == ModifierKeys.Control)
         {
-            if (MessageBox.Show("确定要删除这个提醒吗？", "确认", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            if (e.Key == Key.F)
             {
-                _reminders.Remove(selected);
-                DataService.SaveReminders(_reminders);
-                RefreshReminderList();
-                ReminderService.Start(_reminders, _settings.ReminderFrequency);
+                NavigateTo("Passwords");
+                _passwordsView.FocusSearch();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.N)
+            {
+                if (MainContentControl.Content == _passwordsView) _passwordsView.ShowAddPasswordDialog();
+                else if (MainContentControl.Content == _remindersView) _remindersView.ShowAddReminderDialog();
+                else if (MainContentControl.Content == _wallpapersView) _wallpapersView.ShowAddWallpaperDialog();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.OemComma)
+            {
+                NavigateTo("Settings");
+                e.Handled = true;
             }
         }
-        else
+        else if (e.Key == Key.Escape)
         {
-            Services.ToastManager.Show("提示", "请先选择一个提醒条目。", Services.ToastType.Warning);
+            if (_settings.CloseBehavior == CloseBehavior.Tray)
+            {
+                Hide();
+            }
         }
+
+        ResetAutoLockTimer();
     }
 
-    private void TestReminderButton_Click(object sender, RoutedEventArgs e)
+    private void SystemEvents_SessionSwitch(object sender, SessionSwitchEventArgs e)
     {
-        ReminderService.ShowTestReminder();
-    }
-
-    private void OpenWallpaperEditorButton_Click(object sender, RoutedEventArgs e)
-    {
-        var editor = new WallpaperEditorWindow();
-        editor.Show();
-    }
-
-    private void StartupCheckBox_Changed(object sender, RoutedEventArgs e)
-    {
-        SetStartup(StartupCheckBox.IsChecked == true);
-    }
-
-    private void HotkeyTextBox_KeyDown(object sender, KeyEventArgs e)
-    {
-        e.Handled = true;
-        var modifiers = Keyboard.Modifiers;
-        uint modFlags = 0;
-        if ((modifiers & ModifierKeys.Alt) != 0) modFlags |= HotkeyModifiers.Alt;
-        if ((modifiers & ModifierKeys.Control) != 0) modFlags |= HotkeyModifiers.Ctrl;
-        if ((modifiers & ModifierKeys.Shift) != 0) modFlags |= HotkeyModifiers.Shift;
-        if ((modifiers & ModifierKeys.Windows) != 0) modFlags |= HotkeyModifiers.Win;
-
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        HotkeyTextBox.Text = $"{modifiers} + {key}";
-        _settings.HotkeyModifiers = modFlags;
-        _settings.Hotkey = key;
-    }
-
-    private void SaveHotkeyButton_Click(object sender, RoutedEventArgs e)
-    {
-        SettingsService.SaveSettings(_settings);
-        SetupHotkey();
-        Services.ToastManager.Show("成功", "快捷键已保存。", Services.ToastType.Success);
-    }
-
-    private void ReminderFrequencyComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-    {
-        if (ReminderFrequencyComboBox.SelectedIndex >= 0)
+        if (e.Reason == SessionSwitchReason.SessionLock && _settings.LockOnWindowsLock)
         {
-            _settings.ReminderFrequency = (ReminderFrequency)ReminderFrequencyComboBox.SelectedIndex;
-            SettingsService.SaveSettings(_settings);
-            ReminderService.Start(_reminders, _settings.ReminderFrequency);
+            LockVault();
         }
     }
 
-    private void ChangeMasterPasswordButton_Click(object sender, RoutedEventArgs e)
+    private void ResetAutoLockTimer()
     {
-        var changeWindow = new ChangeMasterPasswordWindow();
-        if (changeWindow.ShowDialog() == true)
+        _autoLockTimer?.Stop();
+        if (_settings.AutoLockMinutes > 0 && !string.IsNullOrEmpty(DataService.MasterPassword))
         {
-            try
+            _autoLockTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(_settings.AutoLockMinutes) };
+            _autoLockTimer.Tick += (s, e) =>
             {
-                // Verify old password by trying to load passwords
-                var oldPassword = DataService.MasterPassword;
-                DataService.MasterPassword = changeWindow.OldPassword;
-                var testLoad = DataService.LoadPasswords();
-                
-                // If we get here, old password is correct. Now re-encrypt with new password
-                DataService.MasterPassword = changeWindow.NewPassword;
-                DataService.SavePasswords(_passwords);
-                
-                Services.ToastManager.Show("成功", "主密码已修改。", Services.ToastType.Success);
-            }
-            catch (CryptographicException)
-            {
-                Services.ToastManager.Show("错误", "旧密码错误，无法修改主密码。", Services.ToastType.Error);
-            }
-            catch (Exception ex)
-            {
-                Services.ToastManager.Show("错误", $"修改主密码失败: {ex.Message}", Services.ToastType.Error);
-            }
+                _autoLockTimer?.Stop();
+                LockVault();
+                ToastManager.Show("安全提示", $"由于超过 {_settings.AutoLockMinutes} 分钟无操作，密码库已自动锁定。", ToastType.Info);
+            };
+            _autoLockTimer.Start();
+        }
+    }
+
+    public void LockVault()
+    {
+        DataService.MasterPassword = null;
+        UpdateSidebarVaultStatus();
+        if (MainContentControl.Content == _passwordsView)
+        {
+            _passwordsView.CheckVaultStateAndLoad();
         }
     }
 
@@ -501,89 +301,122 @@ public partial class MainWindow : Window
     {
         try
         {
-            _hotkeyService?.Dispose();
-            _hotkeyService = null;
-            
-            // Wait for window handle to be created
-            if (!IsLoaded)
-            {
-                return;
-            }
-            
-            // Force window handle creation
-            var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-            if (handle == IntPtr.Zero)
-            {
-                // Window handle not ready yet, try again later
-                Dispatcher.BeginInvoke(new Action(() => SetupHotkey()), System.Windows.Threading.DispatcherPriority.Loaded);
-                return;
-            }
-            
+            _hotkeyService?.Unregister();
             _hotkeyService = new GlobalHotkeyService(this);
             _hotkeyService.Register(_settings.HotkeyModifiers, (uint)KeyInterop.VirtualKeyFromKey(_settings.Hotkey));
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Failed to setup hotkey: {ex.Message}");
-            // Don't throw, just log the error
+            AppDataPath.LogError("SetupHotkey", ex);
         }
     }
 
-    private void StartReminderService()
+    private void StartWallpaperService()
     {
         try
         {
-            ReminderService.Start(_reminders, _settings.ReminderFrequency);
+            string path = AppDataPath.WallpapersFile;
+            if (!File.Exists(path) && File.Exists(Path.Combine(AppContext.BaseDirectory, "wallpapers.json")))
+            {
+                path = Path.Combine(AppContext.BaseDirectory, "wallpapers.json");
+            }
+
+            if (File.Exists(path))
+            {
+                string json = File.ReadAllText(path);
+                var wallpaperStates = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.List<WallpaperState>>(json);
+
+                if (wallpaperStates != null && wallpaperStates.Count > 0)
+                {
+                    if (_settings.IsWallpaperRotationEnabled)
+                    {
+                        WallpaperService.StartRotation(wallpaperStates, _settings.WallpaperRotationIntervalMinutes, _settings.WallpaperRotationMode);
+                    }
+                    else if (!string.IsNullOrEmpty(_settings.CurrentWallpaperName))
+                    {
+                        var state = wallpaperStates.FirstOrDefault(w => w.Name == _settings.CurrentWallpaperName);
+                        if (state != null)
+                        {
+                            WallpaperService.StartAutoRefresh(state);
+                        }
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Failed to start reminder service: {ex.Message}");
-            // Don't crash the app if reminder service fails
+            AppDataPath.LogError("StartWallpaperService", ex);
         }
     }
 
-    private bool IsStartupEnabled()
+    public void ShowWindow()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private void ShowWindow_Click(object sender, RoutedEventArgs e)
+    {
+        ShowWindow();
+    }
+
+    private void TraySearchPassword_Click(object sender, RoutedEventArgs e)
+    {
+        ShowWindow();
+        NavigateTo("Passwords");
+        _passwordsView.FocusSearch();
+    }
+
+    private void TrayAddReminder_Click(object sender, RoutedEventArgs e)
+    {
+        ShowWindow();
+        NavigateTo("Reminders", addReminder: true);
+    }
+
+    private async void TrayNextWallpaper_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", false);
-            return key?.GetValue("NewDesk") != null;
+            await WallpaperService.RotateNextAsync();
+            ToastManager.Show("壁纸", "已成功切换至下一张壁纸。", ToastType.Success);
         }
         catch
         {
-            return false;
+            // Ignore
         }
     }
 
-    private void SetStartup(bool enable)
+    private void TrayLockVault_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            var fileName = Environment.ProcessPath;
-            if (string.IsNullOrEmpty(fileName))
-            {
-                throw new InvalidOperationException("Could not determine executable path.");
-            }
+        LockVault();
+        ToastManager.Show("已锁定", "密码库已锁定。", ToastType.Info);
+    }
 
-            using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
-            if (key == null)
-            {
-                throw new InvalidOperationException("Could not open registry key for startup.");
-            }
+    private void TraySettings_Click(object sender, RoutedEventArgs e)
+    {
+        ShowWindow();
+        NavigateTo("Settings");
+    }
 
-            if (enable)
-            {
-                // Quote the path to handle spaces
-                key.SetValue("NewDesk", $"\"{fileName}\"");
-            }
-            else
-            {
-                key.DeleteValue("NewDesk", false);
-            }
-        }
-        catch (Exception ex)
+    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (_settings.CloseBehavior == CloseBehavior.Tray)
         {
-            Services.ToastManager.Show("错误", $"设置开机自启动失败: {ex.Message}", Services.ToastType.Error);
+            e.Cancel = true;
+            Hide();
         }
+        else
+        {
+            ReminderService.Stop();
+            _hotkeyService?.Dispose();
+        }
+    }
+
+    private void Exit_Click(object sender, RoutedEventArgs e)
+    {
+        ReminderService.Stop();
+        _hotkeyService?.Dispose();
+        Application.Current.Shutdown();
     }
 }

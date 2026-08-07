@@ -1,0 +1,110 @@
+<UserControl x:Class="NewDesk.Views.DynamicInfoView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24">
+        <StackPanel MaxWidth="800" HorizontalAlignment="Left">
+            <!-- Header -->
+            <Grid Margin="0,0,0,20">
+                <StackPanel>
+                    <TextBlock Text="⚡ 动态信息与 API 配置" Style="{StaticResource Header1TextStyle}"/>
+                    <TextBlock Text="通过 API 或预设模板获取天气、温度等动态文本并展示在桌面" Style="{StaticResource SubHeaderTextStyle}" Margin="0,4,0,0"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Preset Cards Selection -->
+            <Border Style="{StaticResource CardStyle}" Padding="20">
+                <StackPanel>
+                    <TextBlock Text="第一步：你想显示什么？" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
+                    
+                    <UniformGrid Columns="3" Margin="0,0,0,16">
+                        <Border x:Name="WeatherCard" Style="{StaticResource CardStyle}" Margin="4" Padding="12" Background="{DynamicResource SurfaceSecondaryBackground}" Cursor="Hand" MouseLeftButtonDown="PresetCard_Click" Tag="Weather">
+                            <StackPanel HorizontalAlignment="Center">
+                                <TextBlock Text="🌤" FontSize="32" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                                <TextBlock Text="城市天气与温度" Style="{StaticResource Header2TextStyle}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="全球主要城市实时天气" Style="{StaticResource CaptionTextStyle}" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="CryptoCard" Style="{StaticResource CardStyle}" Margin="4" Padding="12" Background="{DynamicResource SurfaceSecondaryBackground}" Cursor="Hand" MouseLeftButtonDown="PresetCard_Click" Tag="Crypto">
+                            <StackPanel HorizontalAlignment="Center">
+                                <TextBlock Text="📈" FontSize="32" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                                <TextBlock Text="汇率与指数" Style="{StaticResource Header2TextStyle}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="实时金融与货币汇率" Style="{StaticResource CaptionTextStyle}" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="CustomCard" Style="{StaticResource CardStyle}" Margin="4" Padding="12" Background="{DynamicResource SurfaceSecondaryBackground}" Cursor="Hand" MouseLeftButtonDown="PresetCard_Click" Tag="Custom">
+                            <StackPanel HorizontalAlignment="Center">
+                                <TextBlock Text="🌐" FontSize="32" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                                <TextBlock Text="自定义 API" Style="{StaticResource Header2TextStyle}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="从任意 JSON / HTTP 接口提取" Style="{StaticResource CaptionTextStyle}" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </UniformGrid>
+
+                    <!-- Simple Mode Configuration Panel -->
+                    <StackPanel x:Name="SimpleModePanel">
+                        <TextBlock Text="城市或地区：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,6"/>
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="CityTextBox" Text="Beijing" Margin="0,0,8,0"/>
+                            <Button x:Name="TestApiButton" Grid.Column="1" Content="测试连接" Style="{StaticResource ModernButton}" Width="110" Click="TestApiButton_Click"/>
+                        </Grid>
+
+                        <TextBlock Text="显示样式：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,6"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                            <RadioButton x:Name="FormatComboRadio" Content="温度 + 天气描述 (例: 22°C 多云)" Style="{StaticResource BodyTextStyle}" IsChecked="True" Margin="0,0,16,0"/>
+                            <RadioButton x:Name="FormatTempRadio" Content="仅温度 (例: 22°C)" Style="{StaticResource BodyTextStyle}" Margin="0,0,16,0"/>
+                        </StackPanel>
+
+                        <!-- Live Preview Result Box -->
+                        <Border x:Name="PreviewResultBorder" Background="{DynamicResource InputBackground}" BorderBrush="{DynamicResource BorderBrushColor}" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="实时预览：" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,4"/>
+                                <TextBlock x:Name="PreviewResultText" Text="点击“测试连接”查看 API 返回数据" Style="{StaticResource Header2TextStyle}" Foreground="{DynamicResource PrimaryBrush}"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Visual JSON Path Selector (Populated after successful JSON fetch) -->
+            <Border x:Name="JsonSelectorBorder" Style="{StaticResource CardStyle}" Padding="20" Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock Text="可视化 JSON 字段提取选择器" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,8"/>
+                    <TextBlock Text="点击解析出的 JSON 字段直接提取并自动填充规则：" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,12"/>
+                    <TreeView x:Name="JsonTreeView" Height="180" Background="{DynamicResource InputBackground}" BorderBrush="{DynamicResource BorderBrushColor}" BorderThickness="1" SelectedItemChanged="JsonTreeView_SelectedItemChanged"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Advanced Configuration Expander -->
+            <Expander Header="⚙ 高级 API 设置 (Regex &amp; 提取规则)" Style="{StaticResource CardStyle}" Padding="12" Margin="0,0,0,16" IsExpanded="False">
+                <StackPanel Margin="8,12,8,8">
+                    <TextBlock Text="API URL 接口地址：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="ApiUrlTextBox" Text="https://wttr.in/Beijing?format=j1" Margin="0,0,0,12"/>
+
+                    <TextBlock Text="正则表达式 (Regex Extraction Rule)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="ApiRegexTextBox" Text="&quot;temp_C&quot;:\s*&quot;(\d+)&quot;" Margin="0,0,0,12"/>
+
+                    <TextBlock Text="前缀 (Prefix)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="ApiPrefixTextBox" Text="北京温度：" Margin="0,0,0,12"/>
+
+                    <TextBlock Text="后缀 (Suffix)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="ApiSuffixTextBox" Text="°C" Margin="0,0,0,12"/>
+
+                    <TextBlock Text="格式化字符串 (Formatting)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="ApiFormattingTextBox" Text="{}{0}" Margin="0,0,0,8"/>
+                </StackPanel>
+            </Expander>
+
+            <!-- Bottom Save Actions -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                <Button x:Name="SaveApiConfigButton" Content="保存动态信息配置" Style="{StaticResource ModernButton}" Width="160" Click="SaveApiConfigButton_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
