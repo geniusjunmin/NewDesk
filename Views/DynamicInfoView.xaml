@@ -57,8 +57,8 @@
 
                         <TextBlock Text="显示样式：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,6"/>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                            <RadioButton x:Name="FormatComboRadio" Content="温度 + 天气描述 (例: 22°C 多云)" Style="{StaticResource BodyTextStyle}" IsChecked="True" Margin="0,0,16,0"/>
-                            <RadioButton x:Name="FormatTempRadio" Content="仅温度 (例: 22°C)" Style="{StaticResource BodyTextStyle}" Margin="0,0,16,0"/>
+                            <RadioButton x:Name="FormatComboRadio" Content="温度 + 天气描述 (例: 22°C 多云)" IsChecked="True" Margin="0,0,16,0"/>
+                            <RadioButton x:Name="FormatTempRadio" Content="仅温度 (例: 22°C)" Margin="0,0,16,0"/>
                         </StackPanel>
 
                         <!-- Live Preview Result Box -->
@@ -82,24 +82,26 @@
             </Border>
 
             <!-- Advanced Configuration Expander -->
-            <Expander Header="⚙ 高级 API 设置 (Regex &amp; 提取规则)" Style="{StaticResource CardStyle}" Padding="12" Margin="0,0,0,16" IsExpanded="False">
-                <StackPanel Margin="8,12,8,8">
-                    <TextBlock Text="API URL 接口地址：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
-                    <TextBox x:Name="ApiUrlTextBox" Text="https://wttr.in/Beijing?format=j1" Margin="0,0,0,12"/>
+            <Border Style="{StaticResource CardStyle}" Padding="12" Margin="0,0,0,16">
+                <Expander Header="⚙ 高级 API 设置 (Regex &amp; 提取规则)" IsExpanded="False">
+                    <StackPanel Margin="8,12,8,8">
+                        <TextBlock Text="API URL 接口地址：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                        <TextBox x:Name="ApiUrlTextBox" Text="https://wttr.in/Beijing?format=j1" Margin="0,0,0,12"/>
 
-                    <TextBlock Text="正则表达式 (Regex Extraction Rule)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
-                    <TextBox x:Name="ApiRegexTextBox" Text="&quot;temp_C&quot;:\s*&quot;(\d+)&quot;" Margin="0,0,0,12"/>
+                        <TextBlock Text="正则表达式 (Regex Extraction Rule)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                        <TextBox x:Name="ApiRegexTextBox" Text="&quot;temp_C&quot;:\s*&quot;(\d+)&quot;" Margin="0,0,0,12"/>
 
-                    <TextBlock Text="前缀 (Prefix)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
-                    <TextBox x:Name="ApiPrefixTextBox" Text="北京温度：" Margin="0,0,0,12"/>
+                        <TextBlock Text="前缀 (Prefix)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                        <TextBox x:Name="ApiPrefixTextBox" Text="北京温度：" Margin="0,0,0,12"/>
 
-                    <TextBlock Text="后缀 (Suffix)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
-                    <TextBox x:Name="ApiSuffixTextBox" Text="°C" Margin="0,0,0,12"/>
+                        <TextBlock Text="后缀 (Suffix)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                        <TextBox x:Name="ApiSuffixTextBox" Text="°C" Margin="0,0,0,12"/>
 
-                    <TextBlock Text="格式化字符串 (Formatting)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
-                    <TextBox x:Name="ApiFormattingTextBox" Text="{}{0}" Margin="0,0,0,8"/>
-                </StackPanel>
-            </Expander>
+                        <TextBlock Text="格式化字符串 (Formatting)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                        <TextBox x:Name="ApiFormattingTextBox" Text="{}{0}" Margin="0,0,0,8"/>
+                    </StackPanel>
+                </Expander>
+            </Border>
 
             <!-- Bottom Save Actions -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">

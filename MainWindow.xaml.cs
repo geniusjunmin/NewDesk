@@ -68,11 +68,7 @@ public partial class MainWindow : Window
                 if (!DataService.AnyDataExists())
                 {
                     // Brand new user -> Launch Setup Wizard
-                    bool? result = RunSetupWizard();
-                    if (result != true)
-                    {
-                        // User cancelled wizard -> shutdown or continue
-                    }
+                    RunSetupWizard();
                 }
                 else
                 {
@@ -151,6 +147,7 @@ public partial class MainWindow : Window
 
     private void UpdateFeatureVisibility()
     {
+        if (NavPasswordsRadio == null) return;
         NavPasswordsRadio.Visibility = _settings.EnablePasswords ? Visibility.Visible : Visibility.Collapsed;
         NavRemindersRadio.Visibility = _settings.EnableReminders ? Visibility.Visible : Visibility.Collapsed;
         NavWallpaperRadio.Visibility = _settings.EnableWallpaper ? Visibility.Visible : Visibility.Collapsed;
@@ -159,6 +156,7 @@ public partial class MainWindow : Window
 
     private void NavRadio_Checked(object sender, RoutedEventArgs e)
     {
+        if (MainContentControl == null) return;
         if (sender is RadioButton radio && radio.Tag is string tag)
         {
             NavigateTo(tag);
@@ -167,6 +165,8 @@ public partial class MainWindow : Window
 
     public void NavigateTo(string target, bool addPassword = false, bool addReminder = false)
     {
+        if (MainContentControl == null) return;
+
         UserControl targetView = target switch
         {
             "Home" => _homeView,
@@ -181,14 +181,17 @@ public partial class MainWindow : Window
 
         MainContentControl.Content = targetView;
 
-        // Sync RadioButton state
-        if (target == "Home") NavHomeRadio.IsChecked = true;
-        else if (target == "Passwords") NavPasswordsRadio.IsChecked = true;
-        else if (target == "Reminders") NavRemindersRadio.IsChecked = true;
-        else if (target == "Wallpaper") NavWallpaperRadio.IsChecked = true;
-        else if (target == "DynamicInfo") NavDynamicInfoRadio.IsChecked = true;
-        else if (target == "Settings") NavSettingsRadio.IsChecked = true;
-        else if (target == "Help") NavHelpRadio.IsChecked = true;
+        // Sync RadioButton state safely
+        if (NavHomeRadio != null)
+        {
+            if (target == "Home") NavHomeRadio.IsChecked = true;
+            else if (target == "Passwords" && NavPasswordsRadio != null) NavPasswordsRadio.IsChecked = true;
+            else if (target == "Reminders" && NavRemindersRadio != null) NavRemindersRadio.IsChecked = true;
+            else if (target == "Wallpaper" && NavWallpaperRadio != null) NavWallpaperRadio.IsChecked = true;
+            else if (target == "DynamicInfo" && NavDynamicInfoRadio != null) NavDynamicInfoRadio.IsChecked = true;
+            else if (target == "Settings" && NavSettingsRadio != null) NavSettingsRadio.IsChecked = true;
+            else if (target == "Help" && NavHelpRadio != null) NavHelpRadio.IsChecked = true;
+        }
 
         UpdateSidebarVaultStatus();
 
@@ -214,6 +217,7 @@ public partial class MainWindow : Window
 
     public void UpdateSidebarVaultStatus()
     {
+        if (SidebarLockIconText == null || SidebarLockStatusText == null) return;
         if (!string.IsNullOrEmpty(DataService.MasterPassword))
         {
             SidebarLockIconText.Text = "🔓";
@@ -291,7 +295,7 @@ public partial class MainWindow : Window
     {
         DataService.MasterPassword = null;
         UpdateSidebarVaultStatus();
-        if (MainContentControl.Content == _passwordsView)
+        if (MainContentControl != null && MainContentControl.Content == _passwordsView)
         {
             _passwordsView.CheckVaultStateAndLoad();
         }

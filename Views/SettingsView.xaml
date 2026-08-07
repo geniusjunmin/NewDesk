@@ -21,14 +21,14 @@
 
                     <TextBlock Text="启动行为：" Style="{StaticResource BodyTextStyle}" Margin="0,4,0,6"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                        <RadioButton x:Name="StartupBehaviorNormalRadio" Content="打开主窗口" Style="{StaticResource BodyTextStyle}" IsChecked="True" Checked="ImmediateSave_Click" Margin="0,0,16,0"/>
-                        <RadioButton x:Name="StartupBehaviorTrayRadio" Content="最小化到系统托盘" Style="{StaticResource BodyTextStyle}" Checked="ImmediateSave_Click"/>
+                        <RadioButton x:Name="StartupBehaviorNormalRadio" Content="打开主窗口" IsChecked="True" Checked="ImmediateSave_Click" Margin="0,0,16,0"/>
+                        <RadioButton x:Name="StartupBehaviorTrayRadio" Content="最小化到系统托盘" Checked="ImmediateSave_Click"/>
                     </StackPanel>
 
                     <TextBlock Text="点击窗口关闭按钮时：" Style="{StaticResource BodyTextStyle}" Margin="0,4,0,6"/>
                     <StackPanel Orientation="Horizontal">
-                        <RadioButton x:Name="CloseBehaviorTrayRadio" Content="最小化到系统托盘" Style="{StaticResource BodyTextStyle}" IsChecked="True" Checked="ImmediateSave_Click" Margin="0,0,16,0"/>
-                        <RadioButton x:Name="CloseBehaviorExitRadio" Content="退出 NewDesk" Style="{StaticResource BodyTextStyle}" Checked="ImmediateSave_Click"/>
+                        <RadioButton x:Name="CloseBehaviorTrayRadio" Content="最小化到系统托盘" IsChecked="True" Checked="ImmediateSave_Click" Margin="0,0,16,0"/>
+                        <RadioButton x:Name="CloseBehaviorExitRadio" Content="退出 NewDesk" Checked="ImmediateSave_Click"/>
                     </StackPanel>
                 </StackPanel>
             </Border>
@@ -134,9 +134,9 @@
                 <StackPanel>
                     <TextBlock Text="外观主题" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
                     <StackPanel Orientation="Horizontal">
-                        <RadioButton x:Name="ThemeSystemRadio" Content="跟随系统" Style="{StaticResource BodyTextStyle}" IsChecked="True" Checked="Theme_SelectionChanged" Margin="0,0,20,0"/>
-                        <RadioButton x:Name="ThemeLightRadio" Content="浅色主题" Style="{StaticResource BodyTextStyle}" Checked="Theme_SelectionChanged" Margin="0,0,20,0"/>
-                        <RadioButton x:Name="ThemeDarkRadio" Content="深色主题" Style="{StaticResource BodyTextStyle}" Checked="Theme_SelectionChanged"/>
+                        <RadioButton x:Name="ThemeSystemRadio" Content="跟随系统" IsChecked="True" Checked="Theme_SelectionChanged" Margin="0,0,20,0"/>
+                        <RadioButton x:Name="ThemeLightRadio" Content="浅色主题" Checked="Theme_SelectionChanged" Margin="0,0,20,0"/>
+                        <RadioButton x:Name="ThemeDarkRadio" Content="深色主题" Checked="Theme_SelectionChanged"/>
                     </StackPanel>
                 </StackPanel>
             </Border>
