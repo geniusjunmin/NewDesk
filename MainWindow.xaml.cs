@@ -163,6 +163,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private readonly AiAssistantView _aiAssistantView = new();
+
     public void NavigateTo(string target, bool addPassword = false, bool addReminder = false)
     {
         if (MainContentControl == null) return;
@@ -174,6 +176,7 @@ public partial class MainWindow : Window
             "Reminders" => _remindersView,
             "Wallpaper" => _wallpapersView,
             "DynamicInfo" => _dynamicInfoView,
+            "AiAssistant" => _aiAssistantView,
             "Settings" => _settingsView,
             "Help" => _helpView,
             _ => _homeView
@@ -189,6 +192,7 @@ public partial class MainWindow : Window
             else if (target == "Reminders" && NavRemindersRadio != null) NavRemindersRadio.IsChecked = true;
             else if (target == "Wallpaper" && NavWallpaperRadio != null) NavWallpaperRadio.IsChecked = true;
             else if (target == "DynamicInfo" && NavDynamicInfoRadio != null) NavDynamicInfoRadio.IsChecked = true;
+            else if (target == "AiAssistant" && NavAiAssistantRadio != null) NavAiAssistantRadio.IsChecked = true;
             else if (target == "Settings" && NavSettingsRadio != null) NavSettingsRadio.IsChecked = true;
             else if (target == "Help" && NavHelpRadio != null) NavHelpRadio.IsChecked = true;
         }

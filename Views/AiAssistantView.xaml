@@ -1,0 +1,100 @@
+<UserControl x:Class="NewDesk.Views.AiAssistantView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent">
+    <Grid Margin="16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="240"/> <!-- Conversations Sidebar -->
+            <ColumnDefinition Width="*"/>   <!-- Active Chat Pane -->
+        </Grid.ColumnDefinitions>
+
+        <!-- Conversations Sidebar -->
+        <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,12,0" Padding="12">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/> <!-- New Chat Button -->
+                    <RowDefinition Height="*"/>    <!-- History List -->
+                    <RowDefinition Height="Auto"/> <!-- Clear All -->
+                </Grid.RowDefinitions>
+
+                <Button x:Name="NewChatButton" Grid.Row="0" Content="➕ 新建 AI 对话" Style="{StaticResource ModernButton}" HorizontalAlignment="Stretch" Margin="0,0,0,12" Click="NewChatButton_Click"/>
+
+                <ListBox x:Name="ConversationsListBox" Grid.Row="1" Background="Transparent" BorderThickness="0" SelectionChanged="ConversationsListBox_SelectionChanged">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Title}" Style="{StaticResource BodyTextStyle}" TextTrimming="CharacterEllipsis"/>
+                                <Button Grid.Column="1" Content="✕" Style="{StaticResource DangerButton}" Padding="4,2" FontSize="10" Margin="4,0,0,0" Tag="{Binding}" Click="DeleteConversationButton_Click"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <Button x:Name="ClearAllChatsButton" Grid.Row="2" Content="🗑 清空全部历史" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Stretch" Margin="0,12,0,0" Click="ClearAllChatsButton_Click"/>
+            </Grid>
+        </Border>
+
+        <!-- Main Chat Area -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/> <!-- Header & Provider Selector -->
+                <RowDefinition Height="*"/>    <!-- Messages ScrollViewer -->
+                <RowDefinition Height="Auto"/> <!-- Input Box & Send Bar -->
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="12" Margin="0,0,0,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="🤖 NewDesk AI 桌面助手" Style="{StaticResource Header2TextStyle}" Margin="0,0,12,0"/>
+                        <Border x:Name="LocalCloudBadge" Background="{DynamicResource SurfaceSecondaryBackground}" CornerRadius="4" Padding="8,4">
+                            <TextBlock x:Name="LocalCloudBadgeText" Text="☁️ 云端 API" Style="{StaticResource CaptionTextStyle}" Foreground="{DynamicResource PrimaryBrush}"/>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="当前 AI 服务：" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox x:Name="ProviderComboBox" Width="180" SelectionChanged="ProviderComboBox_SelectionChanged"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Messages List -->
+            <ScrollViewer x:Name="MessagesScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12">
+                <StackPanel x:Name="MessagesStackPanel" Margin="0,0,12,0">
+                    <!-- Dynamic Messages will be populated here -->
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Input Bar -->
+            <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBox x:Name="InputTextBox" Grid.Row="0" MinHeight="60" MaxHeight="140" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="14" PreviewKeyDown="InputTextBox_PreviewKeyDown" Tag="输入消息... (Enter 发送，Shift + Enter 换行)"/>
+
+                    <Grid Grid.Row="1" Margin="0,8,0,0">
+                        <TextBlock x:Name="TokenUsageText" Text="Prompt: 0 | Completion: 0 | Total: 0" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center"/>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="StopButton" Content="⏹ 停止生成" Style="{StaticResource DangerButton}" Margin="0,0,8,0" Visibility="Collapsed" Click="StopButton_Click"/>
+                            <Button x:Name="SendButton" Content="发送消息 ➔" Style="{StaticResource ModernButton}" Padding="16,6" Click="SendButton_Click"/>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

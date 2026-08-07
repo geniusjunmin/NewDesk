@@ -110,6 +110,9 @@
                         <!-- Dynamic Info -->
                         <RadioButton x:Name="NavDynamicInfoRadio" Content="⚡  动态信息" Tag="DynamicInfo" GroupName="NavGroup" Style="{StaticResource NavItemStyle}" Checked="NavRadio_Checked"/>
 
+                        <!-- AI Assistant -->
+                        <RadioButton x:Name="NavAiAssistantRadio" Content="🤖  AI 助手" Tag="AiAssistant" GroupName="NavGroup" Style="{StaticResource NavItemStyle}" Checked="NavRadio_Checked"/>
+
                         <Separator Margin="0,16,0,16" Background="{DynamicResource BorderBrushColor}"/>
 
                         <!-- Settings -->
