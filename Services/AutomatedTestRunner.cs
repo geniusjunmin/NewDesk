@@ -223,6 +223,25 @@ public static class AutomatedTestRunner
                     throw new InvalidOperationException("Provider factory failed to instantiate IAiProvider.");
             });
 
+            RunTest("AI Tool Call System & Safety Permissions", async () =>
+            {
+                var tools = Services.Ai.Tools.AiToolRegistry.GetAllTools();
+                if (tools.Count < 3)
+                    throw new InvalidOperationException("AI tool registry is missing core tools.");
+
+                var sysInfoTool = Services.Ai.Tools.AiToolRegistry.GetTool("get_system_info");
+                if (sysInfoTool == null || sysInfoTool.RequiresUserConfirmation)
+                    throw new InvalidOperationException("SystemInfoTool should be read-only without confirmation requirement.");
+
+                var res = await sysInfoTool.ExecuteAsync("{}");
+                if (res.IsError || string.IsNullOrEmpty(res.OutputJson))
+                    throw new InvalidOperationException("SystemInfoTool execution failed.");
+
+                var reminderTool = Services.Ai.Tools.AiToolRegistry.GetTool("create_reminder");
+                if (reminderTool == null || !reminderTool.RequiresUserConfirmation)
+                    throw new InvalidOperationException("ReminderCreateTool MUST require user confirmation.");
+            });
+
             Console.WriteLine("=================================================");
             Console.WriteLine($"✓ ALL {passed}/{total} AUTOMATED TESTS PASSED SUCCESSFULLY!");
             Console.WriteLine("=================================================");
