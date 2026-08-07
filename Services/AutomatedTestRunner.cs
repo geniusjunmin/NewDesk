@@ -188,6 +188,41 @@ public static class AutomatedTestRunner
                 var editor = new WallpaperEditorWindow(testState);
             });
 
+            RunTest("AI Secret Storage (DPAPI) & Redactor Unit Tests", () =>
+            {
+                string testSecretId = "secret_test_key";
+                string testSecretValue = "sk-1234567890abcdef1234567890abcdef";
+
+                Services.Ai.AiSecretStorageService.SaveSecret(testSecretId, testSecretValue);
+                string? retrieved = Services.Ai.AiSecretStorageService.GetSecret(testSecretId);
+                if (retrieved != testSecretValue)
+                    throw new InvalidOperationException("DPAPI secret retrieval failed.");
+
+                Services.Ai.AiSecretStorageService.DeleteSecret(testSecretId);
+                if (Services.Ai.AiSecretStorageService.GetSecret(testSecretId) != null)
+                    throw new InvalidOperationException("DPAPI secret deletion failed.");
+
+                string rawLog = "Header Bearer sk-1234567890abcdef1234567890abcdef and password=mysecretpass";
+                string redacted = Services.Ai.SecretRedactor.Redact(rawLog);
+                if (redacted.Contains("sk-1234567890abcdef1234567890abcdef") || redacted.Contains("mysecretpass"))
+                    throw new InvalidOperationException("SecretRedactor failed to censor tokens.");
+            });
+
+            RunTest("AI Provider Registry Presets & Factory Instantiation", () =>
+            {
+                var presets = Services.Ai.AiProviderRegistry.GetDefaultPresets();
+                if (presets.Count < 5)
+                    throw new InvalidOperationException("Preset providers list is incomplete.");
+
+                var defaultProvider = Services.Ai.AiProviderRegistry.GetDefaultProvider();
+                if (defaultProvider == null)
+                    throw new InvalidOperationException("Default provider is null.");
+
+                var providerInstance = Services.Ai.AiProviderFactory.CreateProvider(defaultProvider);
+                if (providerInstance == null || string.IsNullOrEmpty(providerInstance.ProviderId))
+                    throw new InvalidOperationException("Provider factory failed to instantiate IAiProvider.");
+            });
+
             Console.WriteLine("=================================================");
             Console.WriteLine($"✓ ALL {passed}/{total} AUTOMATED TESTS PASSED SUCCESSFULLY!");
             Console.WriteLine("=================================================");
