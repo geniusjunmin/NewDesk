@@ -6,6 +6,42 @@
         MinHeight="600" MinWidth="850"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBackground}">
+
+    <!-- Window Resources -->
+    <Window.Resources>
+        <!-- Sidebar Navigation RadioButton Style -->
+        <Style x:Key="NavItemStyle" TargetType="RadioButton">
+            <Setter Property="Height" Value="42"/>
+            <Setter Property="Margin" Value="0,0,0,4"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="border"
+                                Background="Transparent"
+                                CornerRadius="8"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SidebarItemHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SidebarItemSelected}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource SidebarTextSelected}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <Grid>
         <!-- System Tray Component -->
         <tb:TaskbarIcon x:Name="MyNotifyIcon" 
@@ -101,38 +137,4 @@
             </Grid>
         </Grid>
     </Grid>
-
-    <!-- Sidebar Navigation RadioButton Style -->
-    <Window.Resources>
-        <Style x:Key="NavItemStyle" TargetType="RadioButton">
-            <Setter Property="Height" Value="42"/>
-            <Setter Property="Margin" Value="0,0,0,4"/>
-            <Setter Property="Padding" Value="14,0"/>
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="border"
-                                Background="Transparent"
-                                CornerRadius="8"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SidebarItemHover}"/>
-                            </Trigger>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SidebarItemSelected}"/>
-                                <Setter Property="Foreground" Value="{DynamicResource SidebarTextSelected}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-    </Window.Resources>
 </Window>
