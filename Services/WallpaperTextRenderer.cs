@@ -22,6 +22,7 @@ public static class WallpaperTextRenderer
         else if (element.DynamicType == "LunarDate") textToRender = "农历 八月十五";
         else if (element.DynamicType == "DayOfWeek") textToRender = DateTime.Now.ToString("dddd", new CultureInfo("zh-CN"));
         else if (element.DynamicType == "Api" && !string.IsNullOrEmpty(apiResultText)) textToRender = apiResultText;
+        else if (element.DynamicType == "AiPrompt" && !string.IsNullOrEmpty(apiResultText)) textToRender = apiResultText;
 
         if (string.IsNullOrEmpty(textToRender)) return;
 

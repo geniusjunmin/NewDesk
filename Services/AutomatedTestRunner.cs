@@ -249,6 +249,36 @@ public static class AutomatedTestRunner
                     throw new InvalidOperationException("DynamicDataService failed to load preset sources.");
             });
 
+            RunTest("Natural Language Reminder Parsing & Snooze Extensions", () =>
+            {
+                var parsed = NaturalLanguageReminderParser.Parse("明天下午3点开会");
+                if (parsed.Title != "下午3点开会")
+                    throw new InvalidOperationException($"Parsed title mismatch: {parsed.Title}");
+
+                parsed.SnoozeUntil = DateTime.Now.AddMinutes(15);
+                if (!parsed.SnoozeUntil.HasValue)
+                    throw new InvalidOperationException("SnoozeUntil setting failed.");
+            });
+
+            RunTest("Vault 2.0 TOTP Code Generation & Local Password Health Score", () =>
+            {
+                string testSecret = "JBSWY3DPEHPK3PXP";
+                var (code, remaining) = TotpService.GenerateTotp(testSecret);
+                if (code.Length != 6 || remaining <= 0 || remaining > 30)
+                    throw new InvalidOperationException($"TOTP generation invalid: code={code}, remaining={remaining}");
+
+                var entries = new List<PasswordEntry>
+                {
+                    new PasswordEntry { Title = "Site1", Password = "123" }, // Weak
+                    new PasswordEntry { Title = "Site2", Password = "123" }, // Weak & Duplicate
+                    new PasswordEntry { Title = "Site3", Password = "StrongPassword123!" } // Strong
+                };
+
+                var report = PasswordHealthService.Evaluate(entries);
+                if (report.WeakCount < 2 || report.Score >= 100)
+                    throw new InvalidOperationException($"PasswordHealthService report calculation failed: Score={report.Score}, Weak={report.WeakCount}");
+            });
+
             Console.WriteLine("=================================================");
             Console.WriteLine($"✓ ALL {passed}/{total} AUTOMATED TESTS PASSED SUCCESSFULLY!");
             Console.WriteLine("=================================================");
