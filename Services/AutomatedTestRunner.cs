@@ -242,6 +242,13 @@ public static class AutomatedTestRunner
                     throw new InvalidOperationException("ReminderCreateTool MUST require user confirmation.");
             });
 
+            RunTest("Dynamic Data Sources Persistence & Predefined Presets", () =>
+            {
+                var sources = DynamicDataService.LoadSources();
+                if (sources.Count == 0)
+                    throw new InvalidOperationException("DynamicDataService failed to load preset sources.");
+            });
+
             Console.WriteLine("=================================================");
             Console.WriteLine($"✓ ALL {passed}/{total} AUTOMATED TESTS PASSED SUCCESSFULLY!");
             Console.WriteLine("=================================================");
