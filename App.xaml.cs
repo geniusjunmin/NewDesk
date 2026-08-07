@@ -1,4 +1,6 @@
-﻿using System.Windows;
+using System;
+using System.Linq;
+using System.Windows;
 using NewDesk.Services;
 
 namespace NewDesk;
@@ -11,10 +13,26 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        
+
+        // Automated Test Runner Flag
+        if (e.Args.Any(a => a.Equals("--test", StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                AutomatedTestRunner.RunAllTests();
+                Shutdown(0);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\n❌ TEST FAILURE EXCEPTION: {ex.Message}");
+                Shutdown(1);
+            }
+            return;
+        }
+
         // Ensure icon exists
         IconService.EnsureIconExists();
-        
+
         // Listen for new windows to set their icon
         EventManager.RegisterClassHandler(typeof(Window), Window.LoadedEvent, new RoutedEventHandler(OnWindowLoaded));
     }
@@ -34,4 +52,3 @@ public partial class App : System.Windows.Application
         }
     }
 }
-
