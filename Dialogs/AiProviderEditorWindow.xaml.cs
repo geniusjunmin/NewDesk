@@ -1,0 +1,206 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using NewDesk.Models.Ai;
+using NewDesk.Services.Ai;
+
+namespace NewDesk.Dialogs;
+
+public partial class AiProviderEditorWindow : Window
+{
+    private readonly AiProviderConfig _config;
+    private bool _isInitializing = true;
+
+    public AiProviderConfig Config => _config;
+
+    public AiProviderEditorWindow(AiProviderConfig? config = null)
+    {
+        InitializeComponent();
+        _config = config ?? new AiProviderConfig();
+
+        Loaded += AiProviderEditorWindow_Loaded;
+    }
+
+    private void AiProviderEditorWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        _isInitializing = true;
+        try
+        {
+            KindComboBox.SelectedIndex = (int)_config.Kind;
+            NameTextBox.Text = _config.Name;
+            BaseUrlTextBox.Text = _config.BaseUrl;
+            ModelComboBox.Text = _config.SelectedModel;
+            StreamingCheckBox.IsChecked = _config.Streaming;
+            DefaultCheckBox.IsChecked = _config.IsDefault;
+
+            if (!string.IsNullOrEmpty(_config.SecretId))
+            {
+                string? secret = AiSecretStorageService.GetSecret(_config.SecretId);
+                ApiKeyPasswordBox.Password = secret ?? "";
+                ApiKeyTextBox.Text = secret ?? "";
+            }
+        }
+        finally
+        {
+            _isInitializing = false;
+        }
+    }
+
+    private void KindComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isInitializing) return;
+
+        var kind = (AiProviderKind)KindComboBox.SelectedIndex;
+        var preset = AiProviderRegistry.GetDefaultPresets().Find(p => p.Kind == kind);
+        if (preset != null)
+        {
+            NameTextBox.Text = preset.Name;
+            BaseUrlTextBox.Text = preset.BaseUrl;
+            ModelComboBox.Text = preset.SelectedModel;
+        }
+    }
+
+    private void ShowKeyToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (ShowKeyToggle.IsChecked == true)
+        {
+            ApiKeyTextBox.Text = ApiKeyPasswordBox.Password;
+            ApiKeyTextBox.Visibility = Visibility.Visible;
+            ApiKeyPasswordBox.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            ApiKeyPasswordBox.Password = ApiKeyTextBox.Text;
+            ApiKeyPasswordBox.Visibility = Visibility.Visible;
+            ApiKeyTextBox.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async void TestConnectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        TestConnectionButton.IsEnabled = false;
+        TestConnectionButton.Content = "⚡ 测试中...";
+        TestResultBorder.Visibility = Visibility.Collapsed;
+
+        SyncConfigFromUI();
+        var tempSecretId = "temp_test_" + Guid.NewGuid().ToString("N");
+        string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
+        if (!string.IsNullOrEmpty(key))
+        {
+            AiSecretStorageService.SaveSecret(tempSecretId, key);
+            _config.SecretId = tempSecretId;
+        }
+
+        try
+        {
+            var provider = AiProviderFactory.CreateProvider(_config);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var res = await provider.TestConnectionAsync(cts.Token);
+
+            TestResultBorder.Visibility = Visibility.Visible;
+            if (res.IsSuccess)
+            {
+                TestResultTitle.Text = "✓ 连接成功";
+                TestResultTitle.Foreground = (System.Windows.Media.Brush)FindResource("SuccessBrush");
+                TestResultDetail.Text = $"响应延迟: {res.LatencyMs} ms | 可用模型: {res.ModelCount} 个";
+            }
+            else
+            {
+                TestResultTitle.Text = "❌ 连接失败";
+                TestResultTitle.Foreground = (System.Windows.Media.Brush)FindResource("DangerBrush");
+                TestResultDetail.Text = res.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            TestResultBorder.Visibility = Visibility.Visible;
+            TestResultTitle.Text = "❌ 连接异常";
+            TestResultTitle.Foreground = (System.Windows.Media.Brush)FindResource("DangerBrush");
+            TestResultDetail.Text = ex.Message;
+        }
+        finally
+        {
+            AiSecretStorageService.DeleteSecret(tempSecretId);
+            TestConnectionButton.IsEnabled = true;
+            TestConnectionButton.Content = "⚡ 测试连接";
+        }
+    }
+
+    private async void FetchModelsButton_Click(object sender, RoutedEventArgs e)
+    {
+        FetchModelsButton.IsEnabled = false;
+        FetchModelsButton.Content = "⟳ 获取中...";
+
+        SyncConfigFromUI();
+        var tempSecretId = "temp_fetch_" + Guid.NewGuid().ToString("N");
+        string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
+        if (!string.IsNullOrEmpty(key))
+        {
+            AiSecretStorageService.SaveSecret(tempSecretId, key);
+            _config.SecretId = tempSecretId;
+        }
+
+        try
+        {
+            var provider = AiProviderFactory.CreateProvider(_config);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var models = await provider.GetModelsAsync(cts.Token);
+
+            ModelComboBox.Items.Clear();
+            foreach (var m in models)
+            {
+                ModelComboBox.Items.Add(m.Id);
+            }
+            if (ModelComboBox.Items.Count > 0)
+            {
+                ModelComboBox.SelectedIndex = 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"获取模型列表失败: {ex.Message}", "获取模型失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            AiSecretStorageService.DeleteSecret(tempSecretId);
+            FetchModelsButton.IsEnabled = true;
+            FetchModelsButton.Content = "⟳ 自动获取模型";
+        }
+    }
+
+    private void SyncConfigFromUI()
+    {
+        _config.Kind = (AiProviderKind)KindComboBox.SelectedIndex;
+        _config.Name = NameTextBox.Text.Trim();
+        _config.BaseUrl = BaseUrlTextBox.Text.Trim();
+        _config.SelectedModel = ModelComboBox.Text.Trim();
+        _config.Streaming = StreamingCheckBox.IsChecked == true;
+        _config.IsDefault = DefaultCheckBox.IsChecked == true;
+
+        if (_config.Kind == AiProviderKind.Claude) _config.Protocol = AiApiProtocol.AnthropicMessages;
+        else if (_config.Kind == AiProviderKind.OpenAI || _config.Kind == AiProviderKind.XAI) _config.Protocol = AiApiProtocol.Responses;
+        else _config.Protocol = AiApiProtocol.ChatCompletions;
+    }
+
+    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        SyncConfigFromUI();
+
+        string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
+        if (string.IsNullOrEmpty(_config.SecretId))
+        {
+            _config.SecretId = "secret_" + Guid.NewGuid().ToString("N");
+        }
+
+        if (!string.IsNullOrEmpty(key))
+        {
+            AiSecretStorageService.SaveSecret(_config.SecretId, key);
+        }
+
+        AiProviderRegistry.SaveProvider(_config);
+        DialogResult = true;
+        Close();
+    }
+}

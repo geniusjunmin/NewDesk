@@ -3,14 +3,64 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="Transparent">
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24">
-        <StackPanel MaxWidth="800" HorizontalAlignment="Left">
+        <StackPanel MaxWidth="850" HorizontalAlignment="Left">
             <!-- Header -->
             <Grid Margin="0,0,0,20">
                 <StackPanel>
                     <TextBlock Text="⚙ 系统设置" Style="{StaticResource Header1TextStyle}"/>
-                    <TextBlock Text="管理启动行为、快捷键、主题外观、安全策略与数据备份" Style="{StaticResource SubHeaderTextStyle}" Margin="0,4,0,0"/>
+                    <TextBlock Text="管理 AI 模型服务、快捷键、主题外观、安全策略与数据备份" Style="{StaticResource SubHeaderTextStyle}" Margin="0,4,0,0"/>
                 </StackPanel>
             </Grid>
+
+            <!-- Section 0: AI & LLM Service Configuration -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="🤖 AI 与模型服务配置" Style="{StaticResource Header2TextStyle}"/>
+                            <TextBlock Text="配置云端大模型 API（OpenAI, Claude, Gemini, xAI, MiniMax, DeepSeek）或本地模型（Ollama, LM Studio）" Style="{StaticResource CaptionTextStyle}" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button x:Name="ScanLocalModelsButton" Content="🔍 扫描本地模型 (Ollama / LM Studio)" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" Click="ScanLocalModelsButton_Click"/>
+                            <Button x:Name="AddAiProviderButton" Content="➕ 添加 AI 服务" Style="{StaticResource ModernButton}" Click="AddAiProviderButton_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <ListView x:Name="AiProvidersListView" MinHeight="160" Background="Transparent" BorderThickness="0" Margin="0,8,0,0">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource CardStyle}" Padding="12" Margin="0,4">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Name}" Style="{StaticResource Header2TextStyle}" Margin="0,0,8,0"/>
+                                                <Border Background="{DynamicResource PrimaryBrush}" CornerRadius="4" Padding="6,2" Visibility="{Binding IsDefault, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <TextBlock Text="默认服务" FontSize="11" Foreground="White"/>
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding BaseUrl}" Style="{StaticResource CaptionTextStyle}" Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding SelectedModel, StringFormat='当前模型: {0}'}" Style="{StaticResource CaptionTextStyle}" Foreground="{DynamicResource PrimaryBrush}" Margin="0,2,0,0"/>
+                                        </StackPanel>
+
+                                        <Button Grid.Column="1" Content="✏️ 编辑" Style="{StaticResource SecondaryButton}" Padding="10,4" Margin="0,0,8,0" Tag="{Binding}" Click="EditAiProviderButton_Click"/>
+                                        <Button Grid.Column="2" Content="🗑 删除" Style="{StaticResource DangerButton}" Padding="10,4" Tag="{Binding}" Click="DeleteAiProviderButton_Click"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </Border>
 
             <!-- Section 1: General Settings -->
             <Border Style="{StaticResource CardStyle}">
@@ -55,7 +105,7 @@
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
                     <TextBlock Text="通知与提醒" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
-                    
+
                     <CheckBox x:Name="EnableNotificationsCheckBox" Content="开启日程提醒通知" Style="{StaticResource ToggleSwitchStyle}" IsChecked="True" Click="ImmediateSave_Click" Margin="0,0,0,12"/>
 
                     <Grid Margin="0,0,0,16">
@@ -83,7 +133,7 @@
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
                     <TextBlock Text="安全与密码库" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
-                    
+
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -145,9 +195,9 @@
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
                     <TextBlock Text="数据与备份" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
-                    
+
                     <TextBlock x:Name="DataPathText" Text="数据目录：%AppData%\NewDesk" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,12"/>
-                    
+
                     <WrapPanel Margin="0,0,0,12">
                         <Button x:Name="OpenDataFolderButton" Content="📁 打开数据目录" Style="{StaticResource SecondaryButton}" Margin="0,0,8,8" Click="OpenDataFolderButton_Click"/>
                         <Button x:Name="ExportBackupButton" Content="📥 导出数据备份" Style="{StaticResource SecondaryButton}" Margin="0,0,8,8" Click="ExportBackupButton_Click"/>

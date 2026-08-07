@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using Microsoft.Win32;
 using NewDesk.Dialogs;
 using NewDesk.Models;
+using NewDesk.Models.Ai;
 using NewDesk.Services;
 using ThemeMode = NewDesk.Models.ThemeMode;
 
@@ -64,6 +65,8 @@ public partial class SettingsView : UserControl
             ThemeSystemRadio.IsChecked = _settings.Theme == ThemeMode.System;
             ThemeLightRadio.IsChecked = _settings.Theme == ThemeMode.Light;
             ThemeDarkRadio.IsChecked = _settings.Theme == ThemeMode.Dark;
+
+            LoadAiProvidersList();
         }
         catch (Exception ex)
         {
@@ -72,6 +75,89 @@ public partial class SettingsView : UserControl
         finally
         {
             _isInitializing = false;
+        }
+    }
+
+    private void LoadAiProvidersList()
+    {
+        try
+        {
+            var providers = Services.Ai.AiProviderRegistry.GetAllProviders();
+            AiProvidersListView.ItemsSource = providers;
+        }
+        catch { }
+    }
+
+    private void AddAiProviderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AiProviderEditorWindow { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() == true)
+        {
+            LoadAiProvidersList();
+            ToastManager.Show("添加成功", $"已成功添加 AI 服务 \"{dialog.Config.Name}\"！", ToastType.Success);
+        }
+    }
+
+    private void EditAiProviderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is AiProviderConfig config)
+        {
+            var dialog = new AiProviderEditorWindow(config) { Owner = Window.GetWindow(this) };
+            if (dialog.ShowDialog() == true)
+            {
+                LoadAiProvidersList();
+                ToastManager.Show("保存成功", $"AI 服务 \"{dialog.Config.Name}\" 设置已更新。", ToastType.Success);
+            }
+        }
+    }
+
+    private void DeleteAiProviderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is AiProviderConfig config)
+        {
+            var confirm = new ConfirmDialog("删除 AI 服务", $"确定要删除 AI 服务 \"{config.Name}\" 吗？", isDanger: true)
+            {
+                Owner = Window.GetWindow(this)
+            };
+            if (confirm.ShowDialog() == true)
+            {
+                Services.Ai.AiProviderRegistry.DeleteProvider(config.ProviderId);
+                LoadAiProvidersList();
+                ToastManager.Show("已删除", $"AI 服务 \"{config.Name}\" 已被删除。", ToastType.Info);
+            }
+        }
+    }
+
+    private async void ScanLocalModelsButton_Click(object sender, RoutedEventArgs e)
+    {
+        ScanLocalModelsButton.IsEnabled = false;
+        ScanLocalModelsButton.Content = "⟳ 正在扫描...";
+
+        try
+        {
+            var detected = await Services.Ai.LocalModelScannerService.ScanLocalModelsAsync();
+            if (detected.Count > 0)
+            {
+                foreach (var p in detected)
+                {
+                    Services.Ai.AiProviderRegistry.SaveProvider(p);
+                }
+                LoadAiProvidersList();
+                ToastManager.Show("扫描成功", $"检测到 {detected.Count} 个本地 LLM 服务 (Ollama / LM Studio) 并已自动添加！", ToastType.Success);
+            }
+            else
+            {
+                ToastManager.Show("未检测到本地模型", "未在本地端口 (11434/1234) 检测到运行中的 Ollama 或 LM Studio。", ToastType.Info);
+            }
+        }
+        catch (Exception ex)
+        {
+            ToastManager.Show("扫描异常", ex.Message, ToastType.Error);
+        }
+        finally
+        {
+            ScanLocalModelsButton.IsEnabled = true;
+            ScanLocalModelsButton.Content = "🔍 扫描本地模型 (Ollama / LM Studio)";
         }
     }
 
