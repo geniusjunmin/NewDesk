@@ -17,22 +17,21 @@ public class SystemInfoTool : IAiTool
         properties = new { }
     };
 
-    public async Task<AiToolResult> ExecuteAsync(string argumentsJson)
+    public Task<AiToolResult> ExecuteAsync(string argumentsJson)
     {
-        await Task.Yield();
         var info = new
         {
             OSVersion = Environment.OSVersion.ToString(),
             Is64BitOS = Environment.Is64BitOperatingSystem,
             ProcessorCount = Environment.ProcessorCount,
             MachineName = Environment.MachineName,
-            AppVersion = "2.0.0",
+            AppVersion = "2.1.0",
             DotNetVersion = Environment.Version.ToString()
         };
 
-        return new AiToolResult
+        return Task.FromResult(new AiToolResult
         {
             OutputJson = JsonSerializer.Serialize(info)
-        };
+        });
     }
 }

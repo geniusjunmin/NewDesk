@@ -19,8 +19,8 @@ public partial class App : System.Windows.Application
         {
             try
             {
-                AutomatedTestRunner.RunAllTests();
-                Shutdown(0);
+                int exitCode = AutomatedTestRunner.RunAllTestsAsync().GetAwaiter().GetResult();
+                Shutdown(exitCode);
             }
             catch (Exception ex)
             {

@@ -280,35 +280,38 @@ public partial class AiAssistantView : UserControl
 
         try
         {
-            var provider = AiProviderFactory.CreateProvider(_currentProviderConfig);
-
-            var req = new AiRequest
+            var turnRequest = new AiTurnRequest
             {
-                Model = _currentProviderConfig.SelectedModel,
-                Messages = AiConversationService.GetTruncatedContextMessages(_currentConversation.Messages),
-                SystemPrompt = "你是一个专业、友好、高效率的 Windows 桌面 AI 智能助手，协助用户管理壁纸、密码、提醒事项与各类本地生产力工具。请保持回答清晰精准。",
-                Stream = _currentProviderConfig.Streaming
+                UserPrompt = prompt,
+                ConversationHistory = AiConversationService.GetTruncatedContextMessages(_currentConversation.Messages),
+                PreferredProvider = _currentProviderConfig,
+                DataSensitivity = DataSensitivity.Personal,
+                ConfirmationCallback = async pending =>
+                {
+                    var confirmDialog = new Dialogs.ConfirmDialog("AI 工具操作请求", pending.HumanReadablePreview)
+                    {
+                        Owner = Window.GetWindow(this)
+                    };
+                    return confirmDialog.ShowDialog() == true;
+                }
             };
 
-            if (_currentProviderConfig.Streaming)
+            var progress = new Progress<AiStreamChunk>(chunk =>
             {
-                aiTextBlock.Text = "";
-                await foreach (var chunk in provider.StreamAsync(req, _streamCts.Token))
+                if (!string.IsNullOrEmpty(chunk.TextDelta))
                 {
-                    if (!string.IsNullOrEmpty(chunk.TextDelta))
-                    {
-                        aiMsg.Content += chunk.TextDelta;
-                        aiTextBlock.Text = aiMsg.Content;
-                        MessagesScrollViewer.ScrollToEnd();
-                    }
+                    aiMsg.Content += chunk.TextDelta;
+                    aiTextBlock.Text = aiMsg.Content;
+                    MessagesScrollViewer.ScrollToEnd();
                 }
-            }
-            else
+            });
+
+            aiTextBlock.Text = "";
+            var finalResp = await AiOrchestrator.ExecuteTurnAsync(turnRequest, progress, _streamCts.Token);
+            if (string.IsNullOrEmpty(aiMsg.Content) && !string.IsNullOrEmpty(finalResp.Content))
             {
-                var resp = await provider.CompleteAsync(req, _streamCts.Token);
-                aiMsg.Content = resp.Content;
+                aiMsg.Content = finalResp.Content;
                 aiTextBlock.Text = aiMsg.Content;
-                TokenUsageText.Text = $"Prompt: {resp.Usage.PromptTokens} | Completion: {resp.Usage.CompletionTokens} | Total: {resp.Usage.TotalTokens}";
             }
 
             AiConversationService.SaveConversation(_currentConversation);

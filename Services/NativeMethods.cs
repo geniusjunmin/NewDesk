@@ -34,6 +34,12 @@ public static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     public static extern bool GetMonitorInfo(IntPtr hMonitor, [In, Out] MONITORINFOEX lpmi);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
     [ComImport]
     [Guid("B92B5250-F175-401D-A830-BAE36136C7E2")]
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

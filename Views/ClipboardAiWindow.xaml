@@ -1,0 +1,52 @@
+<Window x:Class="NewDesk.Views.ClipboardAiWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NewDesk Clipboard AI Assistant" Height="360" Width="640"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" WindowStartupLocation="CenterScreen">
+    <Border Background="{DynamicResource WindowBackground}" CornerRadius="16" BorderBrush="{DynamicResource PrimaryBrush}" BorderThickness="1.5" Padding="16">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" Color="Black" Opacity="0.4" ShadowDepth="8"/>
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/> <!-- Title Bar -->
+                <RowDefinition Height="Auto"/> <!-- Quick Action Buttons -->
+                <RowDefinition Height="*"/>    <!-- AI Output ScrollViewer -->
+                <RowDefinition Height="Auto"/> <!-- Footer Actions -->
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Grid Grid.Row="0" Margin="0,0,0,12">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="📋 NewDesk 剪贴板 AI 助手" Style="{StaticResource Header2TextStyle}"/>
+                    <TextBlock x:Name="CharCountText" Text=" (35 字)" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                </StackPanel>
+                <Button x:Name="CloseButton" Content="✕" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Right" Padding="8,2" IsCancel="True"/>
+            </Grid>
+
+            <!-- Actions Bar -->
+            <WrapPanel Grid.Row="1" Margin="0,0,0,12">
+                <Button x:Name="TranslateEnButton" Content="🌐 翻译成英文" Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" Click="Action_Click" Tag="TranslateEn"/>
+                <Button x:Name="TranslateZhButton" Content="🇨🇳 翻译成中文" Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" Click="Action_Click" Tag="TranslateZh"/>
+                <Button x:Name="PolishButton" Content="✨ 润色文本" Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" Click="Action_Click" Tag="Polish"/>
+                <Button x:Name="SummarizeButton" Content="📝 总结核心" Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" Click="Action_Click" Tag="Summarize"/>
+                <Button x:Name="ReplyButton" Content="✉️ 拟写回复" Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" Click="Action_Click" Tag="Reply"/>
+            </WrapPanel>
+
+            <!-- Output Text Area -->
+            <ScrollViewer x:Name="ResultScrollViewer" Grid.Row="2" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12">
+                <TextBox x:Name="ResultTextBox" FontSize="14" TextWrapping="Wrap" AcceptsReturn="True" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource TextPrimaryBrush}" IsReadOnly="True" Text="请点击上方按钮处理剪贴板文本..."/>
+            </ScrollViewer>
+
+            <!-- Footer -->
+            <Grid Grid.Row="3">
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="CopyResultButton" Content="📋 复制处理结果" Style="{StaticResource ModernButton}" Margin="0,0,8,0" Click="CopyResultButton_Click"/>
+                </StackPanel>
+
+                <TextBlock Text="Ctrl + Shift + A 快捷呼出 | Esc 退出" Style="{StaticResource CaptionTextStyle}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

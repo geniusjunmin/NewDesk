@@ -36,6 +36,13 @@ public enum ThemeMode
     Dark
 }
 
+public enum AiNetworkMode
+{
+    LocalOnly,
+    AskBeforeCloud,
+    AllowCloud
+}
+
 public class AppSettings
 {
     // Legacy / Existing fields
@@ -65,14 +72,25 @@ public class AppSettings
     public bool AutoClearClipboard { get; set; } = true;
     public int AutoClearClipboardSeconds { get; set; } = 30;
 
-    public string AppVersion { get; set; } = "1.0.0";
+    // AI & Productivity Settings (Phase 14, 47)
+    public bool EnableAiAssistant { get; set; } = true;
+    public AiNetworkMode AiNetworkMode { get; set; } = AiNetworkMode.AllowCloud;
+    public bool AllowAiReminderContext { get; set; } = true;
+    public bool AllowAiWallpaperContext { get; set; } = true;
+    public bool AllowAiDynamicDataContext { get; set; } = true;
+    public bool AllowAiPasswordMetadata { get; set; } = false;
+    public bool AllowAiLogAnalysis { get; set; } = false;
+    public bool AllowAiClipboard { get; set; } = true;
+    public bool AllowCloudFallback { get; set; } = true;
+
+    public string AppVersion { get; set; } = "2.1.0";
 
     public AppSettings()
     {
         HotkeyModifiers = (uint)(Services.HotkeyModifiers.Ctrl | Services.HotkeyModifiers.Alt);
         Hotkey = Key.D;
         ReminderFrequency = ReminderFrequency.OnceADay;
-        WallpaperRotationIntervalMinutes = 30; // Default 30 mins
+        WallpaperRotationIntervalMinutes = 30;
         WallpaperRotationMode = WallpaperRotationMode.Sequential;
     }
 }

@@ -96,16 +96,15 @@ public partial class MainWindow : Window
             {
                 try
                 {
-                    var helper = new System.Windows.Interop.WindowInteropHelper(this);
-                    if (helper.Handle == IntPtr.Zero)
-                    {
-                        helper.EnsureHandle();
-                    }
-                    SetupHotkey();
+                    MultiGlobalHotkeyService.Initialize(this);
+                    MultiGlobalHotkeyService.RegisterHotkey("Main Window", (uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Alt), (uint)KeyInterop.VirtualKeyFromKey(Key.D), () => ShowWindow());
+                    MultiGlobalHotkeyService.RegisterHotkey("AI Quick Search", (uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Shift), (uint)KeyInterop.VirtualKeyFromKey(Key.Space), () => ShowAiQuickWindow());
+                    MultiGlobalHotkeyService.RegisterHotkey("Command Palette", (uint)HotkeyModifiers.Ctrl, (uint)KeyInterop.VirtualKeyFromKey(Key.K), () => ShowCommandPalette());
+                    MultiGlobalHotkeyService.RegisterHotkey("Clipboard AI", (uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Shift), (uint)KeyInterop.VirtualKeyFromKey(Key.A), () => ShowClipboardAi());
                 }
                 catch (Exception ex)
                 {
-                    AppDataPath.LogError("MainWindow.SetupHotkey", ex);
+                    AppDataPath.LogError("MainWindow.MultiGlobalHotkeyService", ex);
                 }
             }), DispatcherPriority.Loaded);
 
@@ -362,6 +361,27 @@ public partial class MainWindow : Window
         Show();
         WindowState = WindowState.Normal;
         Activate();
+    }
+
+    public void ShowAiQuickWindow()
+    {
+        var win = new AiQuickWindow();
+        win.PositionTopCenter();
+        win.Show();
+        win.Activate();
+    }
+
+    public void ShowCommandPalette()
+    {
+        var win = new CommandPaletteWindow(this);
+        win.ShowDialog();
+    }
+
+    public void ShowClipboardAi()
+    {
+        var win = new ClipboardAiWindow();
+        win.Show();
+        win.Activate();
     }
 
     private void ShowWindow_Click(object sender, RoutedEventArgs e)

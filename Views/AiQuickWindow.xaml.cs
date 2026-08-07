@@ -86,31 +86,28 @@ public partial class AiQuickWindow : Window
 
         try
         {
-            var provider = AiProviderFactory.CreateProvider(defaultProvider);
-            var req = new AiRequest
+            var turnRequest = new AiTurnRequest
             {
-                Model = defaultProvider.SelectedModel,
-                Messages = new List<AiMessage> { new AiMessage { Role = "user", Content = prompt } },
-                SystemPrompt = "你是一个高效率的 Windows 桌面 AI 助手，请简明扼要地回答用户问题。",
-                Stream = defaultProvider.Streaming
+                UserPrompt = prompt,
+                PreferredProvider = defaultProvider,
+                TaskProfile = AiTaskProfile.FastCommand,
+                DataSensitivity = DataSensitivity.Personal
             };
 
-            if (defaultProvider.Streaming)
+            var progress = new Progress<AiStreamChunk>(chunk =>
             {
-                ResultTextBlock.Text = "";
-                await foreach (var chunk in provider.StreamAsync(req, _streamCts.Token))
+                if (!string.IsNullOrEmpty(chunk.TextDelta))
                 {
-                    if (!string.IsNullOrEmpty(chunk.TextDelta))
-                    {
-                        ResultTextBlock.Text += chunk.TextDelta;
-                        ResultScrollViewer.ScrollToEnd();
-                    }
+                    ResultTextBlock.Text += chunk.TextDelta;
+                    ResultScrollViewer.ScrollToEnd();
                 }
-            }
-            else
+            });
+
+            ResultTextBlock.Text = "";
+            var finalResp = await AiOrchestrator.ExecuteTurnAsync(turnRequest, progress, _streamCts.Token);
+            if (string.IsNullOrEmpty(ResultTextBlock.Text) && !string.IsNullOrEmpty(finalResp.Content))
             {
-                var resp = await provider.CompleteAsync(req, _streamCts.Token);
-                ResultTextBlock.Text = resp.Content;
+                ResultTextBlock.Text = finalResp.Content;
             }
         }
         catch (OperationCanceledException)

@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Windows;
-using System.Windows.Controls;
+using System.Net.Http;
+using System.Threading.Tasks;
 using NewDesk.Dialogs;
 using NewDesk.Models;
+using NewDesk.Models.Ai;
+using NewDesk.Services.Ai;
 using NewDesk.Views;
 using ThemeMode = NewDesk.Models.ThemeMode;
 
@@ -13,7 +15,7 @@ namespace NewDesk.Services;
 
 public static class AutomatedTestRunner
 {
-    public static void RunAllTests()
+    public static async Task<int> RunAllTestsAsync()
     {
         string testGuid = Guid.NewGuid().ToString("N");
         string testRoot = Path.Combine(Path.GetTempPath(), $"NewDeskTests_{testGuid}");
@@ -24,11 +26,11 @@ public static class AutomatedTestRunner
         Console.WriteLine("REAL APP DATA WILL NOT BE TOUCHED OR MODIFIED.");
         Console.WriteLine("=================================================");
 
-        // Switch AppEnvironment to isolated test directory
         AppEnvironment.SetTestEnvironment(testRoot);
 
         int passed = 0;
         int total = 0;
+        bool hasFailure = false;
 
         void RunTest(string testName, Action testAction)
         {
@@ -42,10 +44,29 @@ public static class AutomatedTestRunner
             }
             catch (Exception ex)
             {
+                hasFailure = true;
                 Console.WriteLine("FAILED ✗");
                 Console.WriteLine($"  Error Details: {ex.Message}");
                 Console.WriteLine($"  Stack Trace: {ex.StackTrace}");
-                throw;
+            }
+        }
+
+        async Task RunTestAsync(string testName, Func<Task> testActionAsync)
+        {
+            total++;
+            try
+            {
+                Console.Write($"[TEST {total}] {testName}... ");
+                await testActionAsync();
+                Console.WriteLine("PASSED ✓");
+                passed++;
+            }
+            catch (Exception ex)
+            {
+                hasFailure = true;
+                Console.WriteLine("FAILED ✗");
+                Console.WriteLine($"  Error Details: {ex.Message}");
+                Console.WriteLine($"  Stack Trace: {ex.StackTrace}");
             }
         }
 
@@ -193,37 +214,59 @@ public static class AutomatedTestRunner
                 string testSecretId = "secret_test_key";
                 string testSecretValue = "sk-1234567890abcdef1234567890abcdef";
 
-                Services.Ai.AiSecretStorageService.SaveSecret(testSecretId, testSecretValue);
-                string? retrieved = Services.Ai.AiSecretStorageService.GetSecret(testSecretId);
+                AiSecretStorageService.SaveSecret(testSecretId, testSecretValue);
+                string? retrieved = AiSecretStorageService.GetSecret(testSecretId);
                 if (retrieved != testSecretValue)
                     throw new InvalidOperationException("DPAPI secret retrieval failed.");
 
-                Services.Ai.AiSecretStorageService.DeleteSecret(testSecretId);
-                if (Services.Ai.AiSecretStorageService.GetSecret(testSecretId) != null)
+                AiSecretStorageService.DeleteSecret(testSecretId);
+                if (AiSecretStorageService.GetSecret(testSecretId) != null)
                     throw new InvalidOperationException("DPAPI secret deletion failed.");
 
                 string rawLog = "Header Bearer sk-1234567890abcdef1234567890abcdef and password=mysecretpass";
-                string redacted = Services.Ai.SecretRedactor.Redact(rawLog);
+                string redacted = SecretRedactor.Redact(rawLog);
                 if (redacted.Contains("sk-1234567890abcdef1234567890abcdef") || redacted.Contains("mysecretpass"))
                     throw new InvalidOperationException("SecretRedactor failed to censor tokens.");
             });
 
-            RunTest("AI Provider Registry Presets & Factory Instantiation", () =>
+            await RunTestAsync("AI Provider SSE Streaming & Mock Parsing Test", async () =>
             {
-                var presets = Services.Ai.AiProviderRegistry.GetDefaultPresets();
-                if (presets.Count < 5)
-                    throw new InvalidOperationException("Preset providers list is incomplete.");
+                var mockHandler = new MockHttpMessageHandler(req =>
+                {
+                    var lines = new[]
+                    {
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}",
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"World!\"}}]}",
+                        "data: [DONE]"
+                    };
+                    return MockHttpMessageHandler.CreateSseResponse(lines);
+                });
 
-                var defaultProvider = Services.Ai.AiProviderRegistry.GetDefaultProvider();
-                if (defaultProvider == null)
-                    throw new InvalidOperationException("Default provider is null.");
+                var mockClient = new HttpClient(mockHandler);
+                var config = new AiProviderConfig
+                {
+                    BaseUrl = "https://mock.api.com/v1",
+                    Protocol = AiApiProtocol.ChatCompletions,
+                    SelectedModel = "mock-model"
+                };
 
-                var providerInstance = Services.Ai.AiProviderFactory.CreateProvider(defaultProvider);
-                if (providerInstance == null || string.IsNullOrEmpty(providerInstance.ProviderId))
-                    throw new InvalidOperationException("Provider factory failed to instantiate IAiProvider.");
+                var provider = new OpenAiCompatibleProvider(config, mockClient);
+                var request = new AiRequest { Messages = new List<AiMessage> { new AiMessage { Role = "user", Content = "Hi" } } };
+
+                string result = "";
+                await foreach (var chunk in provider.StreamAsync(request))
+                {
+                    if (!string.IsNullOrEmpty(chunk.TextDelta))
+                    {
+                        result += chunk.TextDelta;
+                    }
+                }
+
+                if (result != "Hello World!")
+                    throw new InvalidOperationException($"Mock SSE streaming failed. Result: {result}");
             });
 
-            RunTest("AI Tool Call System & Safety Permissions", async () =>
+            await RunTestAsync("AI Tool Call System & Safety Permissions", async () =>
             {
                 var tools = Services.Ai.Tools.AiToolRegistry.GetAllTools();
                 if (tools.Count < 3)
@@ -269,9 +312,9 @@ public static class AutomatedTestRunner
 
                 var entries = new List<PasswordEntry>
                 {
-                    new PasswordEntry { Title = "Site1", Password = "123" }, // Weak
-                    new PasswordEntry { Title = "Site2", Password = "123" }, // Weak & Duplicate
-                    new PasswordEntry { Title = "Site3", Password = "StrongPassword123!" } // Strong
+                    new PasswordEntry { Title = "Site1", Password = "123" },
+                    new PasswordEntry { Title = "Site2", Password = "123" },
+                    new PasswordEntry { Title = "Site3", Password = "StrongPassword123!" }
                 };
 
                 var report = PasswordHealthService.Evaluate(entries);
@@ -287,15 +330,23 @@ public static class AutomatedTestRunner
             });
 
             Console.WriteLine("=================================================");
-            Console.WriteLine($"✓ ALL {passed}/{total} AUTOMATED TESTS PASSED SUCCESSFULLY!");
-            Console.WriteLine("=================================================");
+            if (hasFailure)
+            {
+                Console.WriteLine($"❌ TEST SUITE FAILED: {passed}/{total} PASSED.");
+                Console.WriteLine("=================================================");
+                Environment.ExitCode = 1;
+                return 1;
+            }
+            else
+            {
+                Console.WriteLine($"✓ ALL {passed}/{total} AUTOMATED TESTS PASSED SUCCESSFULLY!");
+                Console.WriteLine("=================================================");
+                return 0;
+            }
         }
         finally
         {
-            // Reset environment back to normal mode
             AppEnvironment.ResetToNormalEnvironment();
-
-            // Clean up temporary test directory
             try
             {
                 if (Directory.Exists(testRoot))
