@@ -15,20 +15,17 @@ public static class AutomatedTestRunner
 {
     public static void RunAllTests()
     {
+        string testGuid = Guid.NewGuid().ToString("N");
+        string testRoot = Path.Combine(Path.GetTempPath(), $"NewDeskTests_{testGuid}");
+
         Console.WriteLine("=================================================");
         Console.WriteLine("⚡ NewDesk Automated Test Suite Execution");
+        Console.WriteLine($"TEST DATA ROOT: {testRoot}");
+        Console.WriteLine("REAL APP DATA WILL NOT BE TOUCHED OR MODIFIED.");
         Console.WriteLine("=================================================");
 
-        // Backup existing real user files before running tests
-        string passwordsFile = AppDataPath.PasswordsFile;
-        string remindersFile = AppDataPath.RemindersFile;
-        string settingsFile = AppDataPath.SettingsFile;
-        string wallpapersFile = AppDataPath.WallpapersFile;
-
-        string? backupPasswords = File.Exists(passwordsFile) ? File.ReadAllText(passwordsFile) : null;
-        string? backupReminders = File.Exists(remindersFile) ? File.ReadAllText(remindersFile) : null;
-        string? backupSettings = File.Exists(settingsFile) ? File.ReadAllText(settingsFile) : null;
-        string? backupWallpapers = File.Exists(wallpapersFile) ? File.ReadAllText(wallpapersFile) : null;
+        // Switch AppEnvironment to isolated test directory
+        AppEnvironment.SetTestEnvironment(testRoot);
 
         int passed = 0;
         int total = 0;
@@ -197,24 +194,20 @@ public static class AutomatedTestRunner
         }
         finally
         {
-            // ALWAYS restore real user files after test execution!
+            // Reset environment back to normal mode
+            AppEnvironment.ResetToNormalEnvironment();
+
+            // Clean up temporary test directory
             try
             {
-                if (backupPasswords != null) File.WriteAllText(passwordsFile, backupPasswords);
-                else if (File.Exists(passwordsFile)) File.Delete(passwordsFile);
-
-                if (backupReminders != null) File.WriteAllText(remindersFile, backupReminders);
-                else if (File.Exists(remindersFile)) File.Delete(remindersFile);
-
-                if (backupSettings != null) File.WriteAllText(settingsFile, backupSettings);
-                else if (File.Exists(settingsFile)) File.Delete(settingsFile);
-
-                if (backupWallpapers != null) File.WriteAllText(wallpapersFile, backupWallpapers);
-                else if (File.Exists(wallpapersFile)) File.Delete(wallpapersFile);
+                if (Directory.Exists(testRoot))
+                {
+                    Directory.Delete(testRoot, true);
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Test Cleanup Warning] Failed to restore backup user files: {ex.Message}");
+                Console.WriteLine($"[Test Cleanup Warning] Could not delete temp folder: {ex.Message}");
             }
         }
     }

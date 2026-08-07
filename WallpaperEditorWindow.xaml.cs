@@ -588,12 +588,26 @@ public partial class WallpaperEditorWindow : Window
             if (dialog.ShowDialog() == true)
             {
                 string name = Path.GetFileNameWithoutExtension(dialog.FileName);
+
+                double width = 1920;
+                double height = 1080;
+                try
+                {
+                    var bmp = BitmapFrame.Create(new Uri(dialog.FileName), BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+                    if (bmp.PixelWidth > 0 && bmp.PixelHeight > 0)
+                    {
+                        width = bmp.PixelWidth;
+                        height = bmp.PixelHeight;
+                    }
+                }
+                catch { }
+
                 var newState = new WallpaperState
                 {
                     Name = name,
                     BackgroundImagePath = dialog.FileName,
-                    DesignWidth = 1920,
-                    DesignHeight = 1080
+                    DesignWidth = width,
+                    DesignHeight = height
                 };
 
                 _wallpapers.Add(newState);

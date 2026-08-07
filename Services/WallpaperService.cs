@@ -159,8 +159,7 @@ public static class WallpaperService
 
     public static async Task GenerateAndSetWallpaperAsync(WallpaperState state)
     {
-        string logPath = @"D:\wallpaper_debug.txt";
-        File.AppendAllText(logPath, $"[{DateTime.Now}] Starting GenerateAndSetWallpaperAsync\n");
+        AppDataPath.LogInfo($"Starting GenerateAndSetWallpaperAsync for {state.Name}");
 
         // 1. Fetch API Data
         var apiTasks = new Dictionary<TextElementState, Task<string>>();
@@ -179,24 +178,19 @@ public static class WallpaperService
                 var desktopWallpaper = (NativeMethods.IDesktopWallpaper)new NativeMethods.DesktopWallpaperClass();
                 desktopWallpaper.Enable(true);
                 uint monitorCount = desktopWallpaper.GetMonitorDevicePathCount();
-                File.AppendAllText(logPath, $"Detected {monitorCount} monitors via IDesktopWallpaper.\n");
-                
+                AppDataPath.LogInfo($"Detected {monitorCount} monitors via IDesktopWallpaper.");
+
                 if (monitorCount == 0) throw new Exception("No monitors detected.");
 
                 bool anySuccess = false;
                 for (uint i = 0; i < monitorCount; i++)
                 {
                     string monitorId = desktopWallpaper.GetMonitorDevicePathAt(i);
-                    File.AppendAllText(logPath, $"Monitor {i} ID: {monitorId}\n");
-                    
                     if (string.IsNullOrEmpty(monitorId)) continue;
-                    
-                    desktopWallpaper.GetMonitorRECT(monitorId, out NativeMethods.RECT rect);
-                    File.AppendAllText(logPath, $"Monitor {i} RECT: L={rect.Left}, T={rect.Top}, R={rect.Right}, B={rect.Bottom}\n");
 
+                    desktopWallpaper.GetMonitorRECT(monitorId, out NativeMethods.RECT rect);
                     int pixelWidth = Math.Abs(rect.Right - rect.Left);
                     int pixelHeight = Math.Abs(rect.Bottom - rect.Top);
-                    File.AppendAllText(logPath, $"Monitor {i} Size: {pixelWidth}x{pixelHeight}\n");
 
                     if (pixelWidth <= 0 || pixelHeight <= 0) continue;
 
@@ -214,44 +208,40 @@ public static class WallpaperService
 
                         double scaleX = state.DesignWidth > 0 ? (double)pixelWidth / state.DesignWidth : 1.0;
                         double scaleY = state.DesignHeight > 0 ? (double)pixelHeight / state.DesignHeight : 1.0;
-                        double fontScale = Math.Min(scaleX, scaleY);
 
                         foreach (var element in state.TextElements)
                         {
                             string apiResultText = apiResults.TryGetValue(element, out var res) ? res : string.Empty;
-                            DrawTextElementOnDrawingContext(dc, element, apiResultText, scaleX, scaleY);
+                            WallpaperTextRenderer.DrawElement(dc, element, apiResultText, scaleX, scaleY);
                         }
                     }
 
                     var rtb = new RenderTargetBitmap(pixelWidth, pixelHeight, 96, 96, PixelFormats.Pbgra32);
                     rtb.Render(drawingVisual);
                     var encoder = new PngBitmapEncoder { Frames = { BitmapFrame.Create(rtb) } };
-                    string cacheDir = Path.Combine(Path.GetTempPath(), "NewDesk", "Wallpapers");
+                    string cacheDir = Path.Combine(AppDataPath.CacheFolder, "Wallpapers");
                     Directory.CreateDirectory(cacheDir);
                     string wallpaperPath = Path.Combine(cacheDir, $"wallpaper_{i}.png");
                     using (var fs = new FileStream(wallpaperPath, FileMode.Create, FileAccess.Write)) encoder.Save(fs);
-                    
+
                     try
                     {
                         desktopWallpaper.SetWallpaper(monitorId, wallpaperPath);
-                        File.AppendAllText(logPath, $"Set wallpaper for monitor {i} success.\n");
+                        AppDataPath.LogInfo($"Set wallpaper for monitor {i} success.");
                         anySuccess = true;
                     }
-                    catch (Exception ex) 
-                    { 
-                        File.AppendAllText(logPath, $"Failed to set wallpaper for monitor {i}: {ex.Message}\n");
-                        System.Diagnostics.Debug.WriteLine($"Failed to set wallpaper for monitor {i}: {ex.Message}"); 
+                    catch (Exception ex)
+                    {
+                        AppDataPath.LogError($"Failed to set wallpaper for monitor {i}", ex);
                     }
                 }
 
                 if (!anySuccess) throw new Exception("All COM attempts failed.");
                 desktopWallpaper.SetPosition(NativeMethods.DesktopWallpaperPosition.Fill);
-                File.AppendAllText(logPath, "SetPosition(Fill) called.\n");
             }
             catch (Exception ex)
             {
-                File.AppendAllText(logPath, $"Multi-monitor logic failed: {ex.Message}. Falling back.\n");
-                System.Diagnostics.Debug.WriteLine($"Multi-monitor logic failed: {ex.Message}. Falling back.");
+                AppDataPath.LogError($"Multi-monitor logic failed: {ex.Message}. Falling back.", ex);
                 await FallbackSetWallpaperAsync(state, apiResults);
             }
         });
@@ -260,13 +250,12 @@ public static class WallpaperService
     private static async Task FallbackSetWallpaperAsync(WallpaperState state, Dictionary<TextElementState, string> apiResults)
     {
         await Task.Yield();
-        string logPath = @"D:\wallpaper_debug.txt";
-        File.AppendAllText(logPath, $"[{DateTime.Now}] Starting FallbackSetWallpaperAsync (Span Mode)\n");
+        AppDataPath.LogInfo("Starting FallbackSetWallpaperAsync (Span Mode)");
 
         var monitors = GetMonitors();
         if (monitors.Count == 0)
         {
-             File.AppendAllText(logPath, "No monitors found in fallback. Aborting.\n");
+             AppDataPath.LogInfo("No monitors found in fallback. Aborting.");
              return;
         }
 
@@ -285,7 +274,7 @@ public static class WallpaperService
         int totalWidth = maxX - minX;
         int totalHeight = maxY - minY;
 
-        File.AppendAllText(logPath, $"Fallback Canvas Size: {totalWidth}x{totalHeight} (Min: {minX},{minY})\n");
+        AppDataPath.LogInfo($"Fallback Canvas Size: {totalWidth}x{totalHeight} (Min: {minX},{minY})");
 
         if (totalWidth <= 0 || totalHeight <= 0) return;
 
@@ -294,44 +283,32 @@ public static class WallpaperService
 
         using (var dc = drawingVisual.RenderOpen())
         {
-            // Draw Black Background first
             dc.DrawRectangle(Brushes.Black, null, new Rect(0, 0, totalWidth, totalHeight));
 
-            // Iterate monitors to draw content for EACH
             foreach (var monitor in monitors)
             {
                 int monitorX = monitor.rcMonitor.Left - minX;
                 int monitorY = monitor.rcMonitor.Top - minY;
-                int monitorW = Math.Abs(monitor.rcMonitor.Right - monitor.rcMonitor.Left);
-                int monitorH = Math.Abs(monitor.rcMonitor.Bottom - monitor.rcMonitor.Top);
+                int monitorWidth = monitor.rcMonitor.Right - monitor.rcMonitor.Left;
+                int monitorHeight = monitor.rcMonitor.Bottom - monitor.rcMonitor.Top;
 
-                File.AppendAllText(logPath, $"Drawing for Monitor at ({monitorX},{monitorY}) Size {monitorW}x{monitorH}\n");
-
-                // Draw Background Image per monitor (if needed, or just once global?)
-                // Usually users want same image on each screen if "Tile/Stretch" but in Span we control it manually.
                 if (!string.IsNullOrEmpty(state.BackgroundImagePath) && File.Exists(state.BackgroundImagePath))
                 {
-                    try 
+                    try
                     {
                         var originalImage = BitmapFrame.Create(new Uri(state.BackgroundImagePath), BitmapCreateOptions.IgnoreImageCache, BitmapCacheOption.OnLoad);
-                        // Draw image stretched to fill THIS monitor's area
-                        dc.DrawRectangle(new ImageBrush(originalImage) { Stretch = Stretch.UniformToFill, AlignmentX = AlignmentX.Center, AlignmentY = AlignmentY.Center }, null, new Rect(monitorX, monitorY, monitorW, monitorH));
+                        dc.DrawImage(originalImage, new Rect(monitorX, monitorY, monitorWidth, monitorHeight));
                     }
-                    catch (Exception ex) 
-                    {
-                        File.AppendAllText(logPath, $"Error loading bg image: {ex.Message}\n");
-                    }
+                    catch { }
                 }
 
-                // Draw Text
-                double scaleX = state.DesignWidth > 0 ? (double)monitorW / state.DesignWidth : 1.0;
-                double scaleY = state.DesignHeight > 0 ? (double)monitorH / state.DesignHeight : 1.0;
-                double fontScale = Math.Min(scaleX, scaleY);
+                double scaleX = state.DesignWidth > 0 ? (double)monitorWidth / state.DesignWidth : 1.0;
+                double scaleY = state.DesignHeight > 0 ? (double)monitorHeight / state.DesignHeight : 1.0;
 
                 foreach (var element in state.TextElements)
                 {
                     string apiResultText = apiResults.TryGetValue(element, out var res) ? res : string.Empty;
-                    DrawTextElementOnDrawingContext(dc, element, apiResultText, scaleX, scaleY, monitorX, monitorY);
+                    WallpaperTextRenderer.DrawElement(dc, element, apiResultText, scaleX, scaleY, monitorX, monitorY);
                 }
             }
         }
@@ -351,7 +328,7 @@ public static class WallpaperService
         
         // Use SPIF_SENDWININICHANGE to ensure refresh
         SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallpaperPath, SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE);
-        File.AppendAllText(logPath, $"Fallback completed. Wallpaper set to: {wallpaperPath}\n");
+        AppDataPath.LogInfo($"Fallback completed. Wallpaper set to: {wallpaperPath}");
     }
 
 
