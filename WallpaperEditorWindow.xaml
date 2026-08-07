@@ -7,6 +7,74 @@
         KeyDown="Window_KeyDown"
         Closing="Window_Closing"
         Background="{DynamicResource WindowBackground}">
+
+    <Window.Resources>
+        <!-- Modern Segmented Tab RadioButton Style -->
+        <Style x:Key="TabRadioButtonStyle" TargetType="RadioButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="14,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceHoverBackground}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceSecondaryBackground}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Modern Compact Segmented Alignment RadioButton Style -->
+        <Style x:Key="SegmentedAlignRadioButtonStyle" TargetType="RadioButton">
+            <Setter Property="Background" Value="{DynamicResource InputBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="14,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{DynamicResource BorderBrushColor}"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceHoverBackground}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource PrimaryBrush}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                                <Setter TargetName="border" Property="BorderThickness" Value="0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="260"/> <!-- Left Panel: Wallpapers & Rotation -->
@@ -138,8 +206,8 @@
 
                     <!-- Left Mode Tabs -->
                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                        <RadioButton x:Name="EditTabRadio" Content="A  编辑文字" IsChecked="True" GroupName="EditorTabGroup" Style="{StaticResource {x:Type RadioButton}}" Margin="0,0,12,0" Checked="TabRadio_Checked"/>
-                        <RadioButton x:Name="LayerTabRadio" Content="☰  图层" GroupName="EditorTabGroup" Style="{StaticResource {x:Type RadioButton}}" Checked="TabRadio_Checked"/>
+                        <RadioButton x:Name="EditTabRadio" Content="A  编辑文字" IsChecked="True" GroupName="EditorTabGroup" Style="{StaticResource TabRadioButtonStyle}" Margin="0,0,8,0" Checked="TabRadio_Checked"/>
+                        <RadioButton x:Name="LayerTabRadio" Content="☰  图层" GroupName="EditorTabGroup" Style="{StaticResource TabRadioButtonStyle}" Checked="TabRadio_Checked"/>
                     </StackPanel>
 
                     <!-- Right History & Save Actions -->
@@ -291,11 +359,11 @@
                                 <TextBlock Text="位置与布局" Style="{StaticResource Header2TextStyle}" FontSize="13" Margin="0,0,0,8"/>
 
                                 <TextBlock Text="对齐方式：" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,4"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                                    <RadioButton x:Name="AlignLeftRadio" Content="左" IsChecked="True" Margin="0,0,12,0" Checked="Align_Checked"/>
-                                    <RadioButton x:Name="AlignCenterRadio" Content="中" Margin="0,0,12,0" Checked="Align_Checked"/>
-                                    <RadioButton x:Name="AlignRightRadio" Content="右" Checked="Align_Checked"/>
-                                </StackPanel>
+                                <UniformGrid Columns="3" Margin="0,0,0,8">
+                                    <RadioButton x:Name="AlignLeftRadio" Content="左" IsChecked="True" Style="{StaticResource SegmentedAlignRadioButtonStyle}" Margin="2" Checked="Align_Checked"/>
+                                    <RadioButton x:Name="AlignCenterRadio" Content="中" Style="{StaticResource SegmentedAlignRadioButtonStyle}" Margin="2" Checked="Align_Checked"/>
+                                    <RadioButton x:Name="AlignRightRadio" Content="右" Style="{StaticResource SegmentedAlignRadioButtonStyle}" Margin="2" Checked="Align_Checked"/>
+                                </UniformGrid>
 
                                 <TextBlock Text="屏幕定位：" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,4"/>
                                 <UniformGrid Columns="3" Margin="0,0,0,8">
@@ -307,18 +375,28 @@
                                     <Button Content="靠下" Style="{StaticResource SecondaryButton}" Padding="4,2" FontSize="11" Margin="2" Click="QuickAlignBottom_Click"/>
                                 </UniformGrid>
 
-                                <TextBlock Text="位置偏移：" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,4"/>
+                                <TextBlock Text="位置偏移 (X / Y)：" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,4"/>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Margin="0,0,4,0">
-                                        <TextBox x:Name="PositionXTextBox" Text="50" TextChanged="Position_TextChanged"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Margin="4,0,0,0">
-                                        <TextBox x:Name="PositionYTextBox" Text="80" TextChanged="Position_TextChanged"/>
-                                    </StackPanel>
+                                    <Grid Grid.Column="0" Margin="0,0,4,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="X:" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                        <TextBox x:Name="PositionXTextBox" Grid.Column="1" Text="50" TextChanged="Position_TextChanged"/>
+                                    </Grid>
+                                    <Grid Grid.Column="1" Margin="4,0,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Y:" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                        <TextBox x:Name="PositionYTextBox" Grid.Column="1" Text="80" TextChanged="Position_TextChanged"/>
+                                    </Grid>
                                 </Grid>
                             </StackPanel>
                         </Border>
