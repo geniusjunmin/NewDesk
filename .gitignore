@@ -1,0 +1,19 @@
+# Build results & IDE output
+bin/
+obj/
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+
+# Temporary build logs
+error.json
+*.tmp
+*.log
+
+# Windows OS generated
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

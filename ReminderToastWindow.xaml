@@ -1,0 +1,61 @@
+<Window x:Class="NewDesk.ReminderToastWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="提醒" 
+        Height="120" Width="380"
+        WindowStyle="None" 
+        AllowsTransparency="True" 
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True">
+    <Window.Resources>
+        <SolidColorBrush x:Key="CardBackgroundColor" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="TextColor" Color="#333333"/>
+        <SolidColorBrush x:Key="TextSecondaryColor" Color="#666666"/>
+        <SolidColorBrush x:Key="BorderColor" Color="#E0E0E0"/>
+        <SolidColorBrush x:Key="PrimaryColor" Color="#4A90E2"/>
+    </Window.Resources>
+    
+    <Border Background="{StaticResource CardBackgroundColor}" 
+            CornerRadius="12" 
+            BorderBrush="{StaticResource BorderColor}" 
+            BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="12" ShadowDepth="4" Opacity="0.3"/>
+        </Border.Effect>
+        <Grid Margin="20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0">
+                <TextBlock Name="TitleTextBlock" 
+                           Text="提醒标题" 
+                           FontWeight="Bold" 
+                           Foreground="{StaticResource PrimaryColor}" 
+                           FontSize="16"
+                           VerticalAlignment="Center"/>
+                <Button Name="CloseButton" 
+                        HorizontalAlignment="Right" 
+                        VerticalAlignment="Top" 
+                        Width="24" Height="24"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        Click="CloseButton_Click"
+                        ToolTip="关闭">
+                    <TextBlock Text="✕" FontSize="16" Foreground="{StaticResource TextSecondaryColor}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+            </Grid>
+
+            <TextBlock Grid.Row="1" 
+                       Name="MessageTextBlock" 
+                       Text="提醒内容..." 
+                       TextWrapping="Wrap" 
+                       Foreground="{StaticResource TextColor}" 
+                       FontSize="14"
+                       Margin="0,8,0,0"/>
+        </Grid>
+    </Border>
+</Window>
