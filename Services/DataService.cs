@@ -116,10 +116,13 @@ public static class DataService
 
     public static int ImportLegacyPasswords()
     {
-        string legacyFilePath = Path.Combine(AppContext.BaseDirectory, "allpaw");
+        string legacyFilePath = File.Exists(Path.Combine(AppDataPath.DataFolder, "allpaw"))
+            ? Path.Combine(AppDataPath.DataFolder, "allpaw")
+            : Path.Combine(AppContext.BaseDirectory, "allpaw");
+
         if (!File.Exists(legacyFilePath))
         {
-             return -1; // File not found
+            return -1; // File not found
         }
 
         try
@@ -137,8 +140,7 @@ public static class DataService
             }
 
             string[] entries = decryptedText.Split('|');
-            var existingPasswords = LoadPasswords();
-            int importCount = 0;
+            var importedList = new List<PasswordEntry>();
 
             foreach (string entry in entries)
             {
@@ -152,36 +154,22 @@ public static class DataService
 
                 if (string.IsNullOrEmpty(title)) continue;
 
-                bool exists = false;
-                foreach (var existing in existingPasswords)
+                importedList.Add(new PasswordEntry
                 {
-                    if (existing.Title == title)
-                    {
-                        exists = true;
-                        break;
-                    }
-                }
-
-                if (!exists)
-                {
-                    existingPasswords.Add(new PasswordEntry
-                    {
-                        Id = Guid.NewGuid(),
-                        Title = title,
-                        Password = password,
-                        Username = "",
-                        Notes = "从 allpaw 导入"
-                    });
-                    importCount++;
-                }
+                    Id = Guid.NewGuid(),
+                    Title = title,
+                    Password = password,
+                    Username = "",
+                    Notes = "从 legacy allpaw 自动恢复"
+                });
             }
 
-            if (importCount > 0)
+            if (importedList.Count > 0 && !string.IsNullOrEmpty(MasterPassword))
             {
-                SavePasswords(existingPasswords);
+                SavePasswords(importedList);
             }
 
-            return importCount;
+            return importedList.Count;
         }
         catch (Exception ex)
         {

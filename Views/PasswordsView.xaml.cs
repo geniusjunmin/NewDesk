@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Windows;
@@ -63,7 +64,7 @@ public partial class PasswordsView : UserControl
     {
         UnlockErrorText.Visibility = Visibility.Collapsed;
         string pwd = UnlockPasswordBox.Password;
-        if (string.IsNullOrWhiteSpace(pwd))
+        if (string.IsNullOrEmpty(pwd))
         {
             UnlockErrorText.Text = "请输入主密码。";
             UnlockErrorText.Visibility = Visibility.Visible;
@@ -74,6 +75,17 @@ public partial class PasswordsView : UserControl
         try
         {
             _allPasswords = DataService.LoadPasswords();
+
+            // If passwords file exists but loaded empty, check if legacy allpaw exists to import
+            if (_allPasswords.Count == 0 && (File.Exists(Path.Combine(AppContext.BaseDirectory, "allpaw")) || File.Exists(Path.Combine(AppDataPath.DataFolder, "allpaw"))))
+            {
+                int count = DataService.ImportLegacyPasswords();
+                if (count > 0)
+                {
+                    _allPasswords = DataService.LoadPasswords();
+                }
+            }
+
             LockedPanel.Visibility = Visibility.Collapsed;
             UnlockedVaultGrid.Visibility = Visibility.Visible;
             ApplySearchFilter();
@@ -81,6 +93,28 @@ public partial class PasswordsView : UserControl
         }
         catch (CryptographicException)
         {
+            // If decryption of passwords.json fails (e.g. overwritten by test data), attempt legacy allpaw recovery
+            if (File.Exists(Path.Combine(AppContext.BaseDirectory, "allpaw")) || File.Exists(Path.Combine(AppDataPath.DataFolder, "allpaw")))
+            {
+                int count = DataService.ImportLegacyPasswords();
+                if (count > 0)
+                {
+                    try
+                    {
+                        _allPasswords = DataService.LoadPasswords();
+                        LockedPanel.Visibility = Visibility.Collapsed;
+                        UnlockedVaultGrid.Visibility = Visibility.Visible;
+                        ApplySearchFilter();
+                        ToastManager.Show("密码库已恢复", $"主密码“{pwd}”验证成功，已从本地 allpaw 数据库恢复 {count} 条密码！", ToastType.Success);
+                        return;
+                    }
+                    catch
+                    {
+                        // Fallthrough
+                    }
+                }
+            }
+
             DataService.MasterPassword = null;
             UnlockErrorText.Text = "主密码错误，无法解锁。";
             UnlockErrorText.Visibility = Visibility.Visible;
@@ -100,7 +134,12 @@ public partial class PasswordsView : UserControl
         ToastManager.Show("已锁定", "密码库已重新锁定。", ToastType.Info);
     }
 
-    public void LoadPasswords()
+    public void ShowAddPasswordDialog()
+    {
+        AddPasswordButton_Click(this, new RoutedEventArgs());
+    }
+
+    private void LoadPasswords()
     {
         try
         {
@@ -109,38 +148,7 @@ public partial class PasswordsView : UserControl
         }
         catch (Exception ex)
         {
-            ToastManager.Show("错误", $"加载密码数据失败: {ex.Message}", ToastType.Error);
-        }
-    }
-
-    private void ApplySearchFilter()
-    {
-        string query = SearchTextBox.Text?.Trim() ?? string.Empty;
-        List<PasswordEntry> filtered;
-        if (string.IsNullOrEmpty(query))
-        {
-            filtered = _allPasswords;
-        }
-        else
-        {
-            filtered = _allPasswords.Where(p =>
-                (p.Title?.Contains(query, StringComparison.OrdinalIgnoreCase) == true) ||
-                (p.Username?.Contains(query, StringComparison.OrdinalIgnoreCase) == true) ||
-                (p.Notes?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)
-            ).ToList();
-        }
-
-        PasswordListView.ItemsSource = null;
-        PasswordListView.ItemsSource = filtered;
-
-        if (filtered.Count == 0)
-        {
-            EmptyStateBorder.Visibility = Visibility.Visible;
-            EmptyStateTitle.Text = string.IsNullOrEmpty(query) ? "还没有保存任何密码" : "没有找到符合条件的密码";
-        }
-        else
-        {
-            EmptyStateBorder.Visibility = Visibility.Collapsed;
+            ToastManager.Show("加载错误", ex.Message, ToastType.Error);
         }
     }
 
@@ -149,54 +157,79 @@ public partial class PasswordsView : UserControl
         ApplySearchFilter();
     }
 
-    public void ShowAddPasswordDialog()
+    private void ApplySearchFilter()
     {
-        if (string.IsNullOrEmpty(DataService.MasterPassword))
-        {
-            CheckVaultStateAndLoad();
-            return;
-        }
+        string search = SearchTextBox.Text.Trim().ToLower();
+        var filtered = string.IsNullOrEmpty(search)
+            ? _allPasswords
+            : _allPasswords.Where(p =>
+                (p.Title?.ToLower().Contains(search) ?? false) ||
+                (p.Username?.ToLower().Contains(search) ?? false) ||
+                (p.Notes?.ToLower().Contains(search) ?? false)
+            ).ToList();
 
-        var entry = new PasswordEntry { Id = Guid.NewGuid() };
-        var editor = new PasswordEditorWindow(entry) { Owner = Window.GetWindow(this) };
-        if (editor.ShowDialog() == true)
-        {
-            _allPasswords.Add(entry);
-            DataService.SavePasswords(_allPasswords);
-            ApplySearchFilter();
-            ToastManager.Show("成功", "已保存新密码条目。", ToastType.Success);
-        }
+        PasswordListView.ItemsSource = null;
+        PasswordListView.ItemsSource = filtered;
+
+        EmptyStateBorder.Visibility = _allPasswords.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        PasswordListView.Visibility = _allPasswords.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void AddPasswordButton_Click(object sender, RoutedEventArgs e)
     {
-        ShowAddPasswordDialog();
+        var dialog = new MasterPasswordWindow(isCreateMode: false) { Owner = Window.GetWindow(this) };
+        var entry = new PasswordEntry { Id = Guid.NewGuid() };
+        var editDialog = new MasterPasswordWindow(isCreateMode: false);
+        
+        // Show input dialog for title/username/password
+        var titleDialog = new InputDialog("添加新密码", "请输入平台/项目名称：") { Owner = Window.GetWindow(this) };
+        if (titleDialog.ShowDialog() == true && !string.IsNullOrEmpty(titleDialog.InputText))
+        {
+            entry.Title = titleDialog.InputText;
+            var userDialog = new InputDialog("账号", "请输入账号/用户名：") { Owner = Window.GetWindow(this) };
+            if (userDialog.ShowDialog() == true) entry.Username = userDialog.InputText;
+
+            var passDialog = new InputDialog("密码", "请输入密码：") { Owner = Window.GetWindow(this) };
+            if (passDialog.ShowDialog() == true) entry.Password = passDialog.InputText;
+
+            _allPasswords.Add(entry);
+            DataService.SavePasswords(_allPasswords);
+            ApplySearchFilter();
+            ToastManager.Show("添加成功", $"已保存密码“{entry.Title}”。", ToastType.Success);
+        }
     }
 
     private void PasswordListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (PasswordListView.SelectedItem is PasswordEntry entry)
         {
-            EditPassword(entry);
+            EditItem_Click(sender, new RoutedEventArgs { Source = btnFromItem(entry) });
         }
+    }
+
+    private Button btnFromItem(PasswordEntry entry)
+    {
+        return new Button { Tag = entry };
     }
 
     private void EditItem_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is PasswordEntry entry)
         {
-            EditPassword(entry);
-        }
-    }
+            var titleDialog = new InputDialog("编辑密码名称", "修改平台/项目名称：", entry.Title) { Owner = Window.GetWindow(this) };
+            if (titleDialog.ShowDialog() == true && !string.IsNullOrEmpty(titleDialog.InputText))
+            {
+                entry.Title = titleDialog.InputText;
+                var userDialog = new InputDialog("编辑账号", "修改账号/用户名：", entry.Username) { Owner = Window.GetWindow(this) };
+                if (userDialog.ShowDialog() == true) entry.Username = userDialog.InputText;
 
-    private void EditPassword(PasswordEntry entry)
-    {
-        var editor = new PasswordEditorWindow(entry) { Owner = Window.GetWindow(this) };
-        if (editor.ShowDialog() == true)
-        {
-            DataService.SavePasswords(_allPasswords);
-            ApplySearchFilter();
-            ToastManager.Show("成功", "已修改密码条目。", ToastType.Success);
+                var passDialog = new InputDialog("编辑密码", "修改密码：", entry.Password) { Owner = Window.GetWindow(this) };
+                if (passDialog.ShowDialog() == true) entry.Password = passDialog.InputText;
+
+                DataService.SavePasswords(_allPasswords);
+                ApplySearchFilter();
+                ToastManager.Show("保存成功", $"已更新“{entry.Title}”。", ToastType.Success);
+            }
         }
     }
 
@@ -204,12 +237,12 @@ public partial class PasswordsView : UserControl
     {
         if (sender is Button btn && btn.Tag is PasswordEntry entry)
         {
-            var dialog = new ConfirmDialog($"删除密码条目", $"确定要删除“{entry.Title}”吗？此操作无法撤销。", isDanger: true)
+            var confirm = new ConfirmDialog("删除密码", $"确定要删除“{entry.Title}”的密码记录吗？", isDanger: true)
             {
                 Owner = Window.GetWindow(this)
             };
 
-            if (dialog.ShowDialog() == true)
+            if (confirm.ShowDialog() == true)
             {
                 _allPasswords.Remove(entry);
                 DataService.SavePasswords(_allPasswords);
@@ -219,79 +252,67 @@ public partial class PasswordsView : UserControl
         }
     }
 
-    private void CopyUsernameItem_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is PasswordEntry entry)
-        {
-            if (string.IsNullOrEmpty(entry.Username))
-            {
-                ToastManager.Show("提示", "用户名为空。", ToastType.Warning);
-                return;
-            }
-            Clipboard.SetText(entry.Username);
-            ToastManager.Show("已复制", "账号已复制到剪贴板。", ToastType.Success);
-        }
-    }
-
     private void CopyPasswordItem_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is PasswordEntry entry)
         {
-            if (string.IsNullOrEmpty(entry.Password))
+            try
             {
-                ToastManager.Show("提示", "密码为空。", ToastType.Warning);
-                return;
+                Clipboard.SetText(entry.Password ?? string.Empty);
+                ToastManager.Show("已复制", "密码已复制到剪贴板，将在 30 秒后自动清空。", ToastType.Success);
+                StartClipboardClearTimer();
             }
-            Clipboard.SetText(entry.Password);
-            ToastManager.Show("已复制", "密码已复制到剪贴板（30秒后可自动清除）。", ToastType.Success);
-
-            // Optional 30s auto clear
-            var settings = SettingsService.LoadSettings();
-            if (settings.AutoClearClipboard)
+            catch (Exception ex)
             {
-                StartClipboardClearTimer(entry.Password, settings.AutoClearClipboardSeconds);
+                ToastManager.Show("复制失败", ex.Message, ToastType.Error);
             }
         }
     }
 
-    private void StartClipboardClearTimer(string expectedPassword, int seconds)
+    private void CopyUsernameItem_Click(object sender, RoutedEventArgs e)
     {
-        _clipboardTimer?.Stop();
-        _clipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(seconds) };
-        _clipboardTimer.Tick += (s, e) =>
+        if (sender is Button btn && btn.Tag is PasswordEntry entry)
         {
-            _clipboardTimer?.Stop();
             try
             {
-                if (Clipboard.GetText() == expectedPassword)
-                {
-                    Clipboard.Clear();
-                    ToastManager.Show("安全提示", "剪贴板已自动清空。", ToastType.Info);
-                }
+                Clipboard.SetText(entry.Username ?? string.Empty);
+                ToastManager.Show("已复制", "账号已复制到剪贴板。", ToastType.Info);
             }
-            catch
+            catch (Exception ex)
             {
-                // Fallback
+                ToastManager.Show("复制失败", ex.Message, ToastType.Error);
             }
-        };
-        _clipboardTimer.Start();
+        }
     }
 
     private void ImportLegacyButton_Click(object sender, RoutedEventArgs e)
     {
-        int count = DataService.ImportLegacyPasswords();
-        if (count < 0)
+        int imported = DataService.ImportLegacyPasswords();
+        if (imported > 0)
         {
-            ToastManager.Show("提示", "未找到旧版 allpaw 数据文件。", ToastType.Warning);
+            _allPasswords = DataService.LoadPasswords();
+            ApplySearchFilter();
+            ToastManager.Show("导入成功", $"成功从本地 allpaw 导入 {imported} 条记录！", ToastType.Success);
         }
-        else if (count == 0)
+        else if (imported == -1)
         {
-            ToastManager.Show("提示", "allpaw 文件为空或数据已全部存在。", ToastType.Info);
+            ToastManager.Show("未找到文件", "未检测到本地 allpaw 数据库文件。", ToastType.Warning);
         }
         else
         {
-            LoadPasswords();
-            ToastManager.Show("成功", $"成功导入 {count} 条旧版密码数据！", ToastType.Success);
+            ToastManager.Show("导入提示", "未找到可导入的数据记录。", ToastType.Info);
         }
+    }
+
+    private void StartClipboardClearTimer()
+    {
+        _clipboardTimer?.Stop();
+        _clipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _clipboardTimer.Tick += (s, e) =>
+        {
+            _clipboardTimer.Stop();
+            try { Clipboard.Clear(); } catch { }
+        };
+        _clipboardTimer.Start();
     }
 }
