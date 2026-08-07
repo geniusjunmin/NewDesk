@@ -151,11 +151,31 @@ public static class AutomatedTestRunner
             mainWindow.NavigateTo("Help");
         });
 
-        RunTest("Dialog Windows Instantiation (ConfirmDialog, SetupWizardWindow)", () =>
+        RunTest("Dialog Windows Instantiation (ConfirmDialog, SetupWizardWindow, ApiDataWizardWindow)", () =>
         {
             var settings = SettingsService.LoadSettings();
             var confirm = new ConfirmDialog("Test Title", "Test Message");
             var wizard = new SetupWizardWindow(settings);
+
+            var testElem = new TextElementState { Text = "Test API", DynamicType = "Api" };
+            var apiWizard = new ApiDataWizardWindow(testElem);
+        });
+
+        RunTest("WallpaperEditorWindow 3-Column Editor Instantiation & State Loading", () =>
+        {
+            var testState = new WallpaperState
+            {
+                Name = "Test Editor Wallpaper",
+                DesignWidth = 1920,
+                DesignHeight = 1080,
+                TextElements = new List<TextElementState>
+                {
+                    new TextElementState { Text = "{公历日期}", DynamicType = "GregorianDate", X = 100, Y = 100 },
+                    new TextElementState { Text = "{API数据}", DynamicType = "Api", X = 100, Y = 200, StrokeEnabled = true, ShadowEnabled = true }
+                }
+            };
+
+            var editor = new WallpaperEditorWindow(testState);
         });
 
         Console.WriteLine("=================================================");

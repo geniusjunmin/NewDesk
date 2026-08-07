@@ -1,21 +1,19 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
-using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ColorPickerWPF;
 using Microsoft.Win32;
+using NewDesk.Dialogs;
 using NewDesk.Models;
 using NewDesk.Services;
 
@@ -23,720 +21,1041 @@ namespace NewDesk;
 
 public partial class WallpaperEditorWindow : Window
 {
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    private static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+    private List<WallpaperState> _wallpapers = new();
+    private WallpaperState? _currentWallpaper;
+    private TextElementState? _selectedElement;
 
-    private const int SPI_SETDESKWALLPAPER = 20;
-    private const int SPIF_UPDATEINIFILE = 0x01;
-    private const int SPIF_SENDWININICHANGE = 0x02;
-    private static readonly string WallpapersPath = Path.Combine(AppContext.BaseDirectory, "wallpapers.json");
-    private static readonly HttpClient HttpClient = new();
-    
-    private bool _isDragging;
-    private Point _mouseOffset;
-    private UIElement? _draggedElement;
-    private TextBlock? _selectedText;
-    private Adorner? _selectionAdorner;
-    private string? _backgroundImagePath;
-    private List<WallpaperState> _wallpaperStates = new();
+    private readonly WallpaperUndoManager _undoManager = new();
+    private bool _isInitializing = true;
+    private bool _isDirty = false;
+    private bool _isPreviewMode = false;
+
+    private double _zoomFactor = 1.0;
+    private bool _isDraggingElement = false;
+    private Point _dragStartPoint;
+    private double _dragStartElementX;
+    private double _dragStartElementY;
 
     public WallpaperEditorWindow() : this(null)
     {
     }
 
-    public WallpaperEditorWindow(WallpaperState? state)
+    public WallpaperEditorWindow(WallpaperState? wallpaperState = null)
     {
         InitializeComponent();
-        LoadSystemFonts();
-        LoadWallpapers();
-        LoadRotationSettings();
-        
-        MainCanvas.MouseLeftButtonDown += (s, e) =>
+
+        _undoManager.StateChanged += (s, e) => UpdateUndoRedoButtons();
+
+        Loaded += WallpaperEditorWindow_Loaded;
+    }
+
+    private void WallpaperEditorWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        _isInitializing = true;
+        try
         {
-            if (e.Source == MainCanvas) SelectText(null);
-        };
+            LoadSystemFonts();
+            LoadWallpapersList();
+            LoadRotationSettings();
+
+            if (_currentWallpaper == null && _wallpapers.Count > 0)
+            {
+                SelectWallpaper(_wallpapers[0]);
+            }
+            else if (_currentWallpaper != null)
+            {
+                SelectWallpaper(_currentWallpaper);
+            }
+            else
+            {
+                UpdateEmptyState();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppDataPath.LogError("WallpaperEditorWindow_Loaded", ex);
+        }
+        finally
+        {
+            _isInitializing = false;
+        }
+    }
+
+    private void LoadSystemFonts()
+    {
+        FontFamilyComboBox.Items.Clear();
+        foreach (var font in Fonts.SystemFontFamilies.OrderBy(f => f.Source))
+        {
+            FontFamilyComboBox.Items.Add(font.Source);
+        }
+        FontFamilyComboBox.SelectedItem = "Microsoft YaHei";
+    }
+
+    private void LoadWallpapersList()
+    {
+        string path = AppDataPath.WallpapersFile;
+        if (!File.Exists(path) && File.Exists(Path.Combine(AppContext.BaseDirectory, "wallpapers.json")))
+        {
+            path = Path.Combine(AppContext.BaseDirectory, "wallpapers.json");
+        }
+
+        if (File.Exists(path))
+        {
+            string json = File.ReadAllText(path);
+            _wallpapers = JsonSerializer.Deserialize<List<WallpaperState>>(json) ?? new List<WallpaperState>();
+        }
+        else
+        {
+            _wallpapers = new List<WallpaperState>();
+        }
+
+        FilterWallpaperList();
+    }
+
+    private void FilterWallpaperList()
+    {
+        string search = WallpaperSearchTextBox.Text.Trim().ToLower();
+        var filtered = string.IsNullOrEmpty(search)
+            ? _wallpapers
+            : _wallpapers.Where(w => w.Name.ToLower().Contains(search)).ToList();
+
+        WallpaperListBox.ItemsSource = null;
+        WallpaperListBox.ItemsSource = filtered;
+        WallpaperCountText.Text = $"共 {_wallpapers.Count} 张壁纸";
+
+        UpdateEmptyState();
     }
 
     private void LoadRotationSettings()
     {
-        try
-        {
-            var settings = SettingsService.LoadSettings();
-            if (EnableRotationCheckBox != null)
-                EnableRotationCheckBox.IsChecked = settings.IsWallpaperRotationEnabled;
-            
-            // Set Interval
-            if (RotationIntervalComboBox != null)
-            {
-                foreach (ComboBoxItem item in RotationIntervalComboBox.Items)
-                {
-                    if (item.Tag != null && int.TryParse(item.Tag.ToString(), out int val) && val == settings.WallpaperRotationIntervalMinutes)
-                    {
-                        RotationIntervalComboBox.SelectedItem = item;
-                        break;
-                    }
-                }
-                if (RotationIntervalComboBox.SelectedItem == null) RotationIntervalComboBox.SelectedIndex = 3; // Default 30m
-            }
+        var settings = SettingsService.LoadSettings();
+        EnableRotationCheckBox.IsChecked = settings.IsWallpaperRotationEnabled;
+        RotationModeComboBox.SelectedIndex = settings.WallpaperRotationMode == WallpaperRotationMode.Sequential ? 0 : 1;
 
-            // Set Mode
-            if (RotationModeComboBox != null)
-            {
-                foreach (ComboBoxItem item in RotationModeComboBox.Items)
-                {
-                    if (item.Tag != null && item.Tag.ToString() == settings.WallpaperRotationMode.ToString())
-                    {
-                        RotationModeComboBox.SelectedItem = item;
-                        break;
-                    }
-                }
-                if (RotationModeComboBox.SelectedItem == null) RotationModeComboBox.SelectedIndex = 0;
-            }
-        }
-        catch (Exception ex)
+        RotationIntervalComboBox.SelectedIndex = settings.WallpaperRotationIntervalMinutes switch
         {
-            System.Diagnostics.Debug.WriteLine($"Failed to load rotation settings: {ex.Message}");
-        }
+            5 => 0,
+            10 => 1,
+            15 => 2,
+            30 => 3,
+            60 => 4,
+            120 => 5,
+            _ => 3
+        };
     }
 
-    private void RotationSetting_Changed(object sender, RoutedEventArgs e)
+    private void SelectWallpaper(WallpaperState state)
     {
-        if (!IsLoaded || _wallpaperStates == null) return;
-
-        try
+        if (_isDirty)
         {
-            var settings = SettingsService.LoadSettings();
-            settings.IsWallpaperRotationEnabled = EnableRotationCheckBox.IsChecked ?? false;
-            
-            if (RotationIntervalComboBox.SelectedItem is ComboBoxItem intervalItem && intervalItem.Tag != null)
-                settings.WallpaperRotationIntervalMinutes = int.Parse(intervalItem.Tag.ToString()!);
-                
-            if (RotationModeComboBox.SelectedItem is ComboBoxItem modeItem && modeItem.Tag != null)
-                settings.WallpaperRotationMode = Enum.Parse<WallpaperRotationMode>(modeItem.Tag.ToString()!);
+            PromptSaveUnsavedChanges();
+        }
 
-            SettingsService.SaveSettings(settings);
+        _currentWallpaper = state;
+        WallpaperListBox.SelectedItem = state;
+        _undoManager.Clear();
 
-        // Update Service
-        if (settings.IsWallpaperRotationEnabled)
+        // Load Canvas Background
+        if (!string.IsNullOrEmpty(state.BackgroundImagePath) && File.Exists(state.BackgroundImagePath))
         {
-            if (_wallpaperStates == null || _wallpaperStates.Count == 0)
+            try
             {
-                Services.ToastManager.Show("提示", "壁纸列表为空，请先保存至少一张壁纸以开启轮换。", Services.ToastType.Warning);
-                EnableRotationCheckBox.IsChecked = false;
-                settings.IsWallpaperRotationEnabled = false;
-                SettingsService.SaveSettings(settings);
-                return;
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(state.BackgroundImagePath);
+                bmp.EndInit();
+                BackgroundImage.Source = bmp;
+
+                // Adjust Design Bounds
+                if (state.DesignWidth <= 0 || state.DesignHeight <= 0)
+                {
+                    state.DesignWidth = bmp.PixelWidth > 0 ? bmp.PixelWidth : 1920;
+                    state.DesignHeight = bmp.PixelHeight > 0 ? bmp.PixelHeight : 1080;
+                }
             }
-            WallpaperService.StartRotation(_wallpaperStates, settings.WallpaperRotationIntervalMinutes, settings.WallpaperRotationMode);
+            catch
+            {
+                BackgroundImage.Source = null;
+            }
         }
         else
         {
-            WallpaperService.StopRotation();
+            BackgroundImage.Source = null;
+        }
+
+        // Set Canvas dimensions based on DesignWidth / DesignHeight
+        CanvasBorder.Width = _currentWallpaper.DesignWidth;
+        CanvasBorder.Height = _currentWallpaper.DesignHeight;
+        MainCanvas.Width = _currentWallpaper.DesignWidth;
+        MainCanvas.Height = _currentWallpaper.DesignHeight;
+
+        _selectedElement = null;
+        _isDirty = false;
+        UpdateWindowTitle();
+        FitToScreen();
+        RenderCanvasElements();
+        UpdatePropertiesPanel();
+        UpdateEmptyState();
+    }
+
+    private void UpdateEmptyState()
+    {
+        EmptyCanvasState.Visibility = _wallpapers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        CanvasBorder.Visibility = _wallpapers.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void RenderCanvasElements()
+    {
+        if (_currentWallpaper == null) return;
+
+        MainCanvas.Children.Clear();
+        MainCanvas.Children.Add(SelectionBorder);
+
+        foreach (var element in _currentWallpaper.TextElements.OrderBy(e => e.ZIndex))
+        {
+            var textBlock = CreateTextBlockForElement(element);
+            Canvas.SetLeft(textBlock, element.X);
+            Canvas.SetTop(textBlock, element.Y);
+            Canvas.SetZIndex(textBlock, element.ZIndex);
+
+            textBlock.MouseLeftButtonDown += (s, e) =>
+            {
+                e.Handled = true;
+                SelectElement(element);
+                StartElementDrag(e);
+            };
+
+            MainCanvas.Children.Add(textBlock);
+        }
+
+        UpdateSelectionBorder();
+        UpdateLayersList();
+    }
+
+    private TextBlock CreateTextBlockForElement(TextElementState element)
+    {
+        string text = element.Text;
+        if (element.DynamicType == "GregorianDate") text = DateTime.Now.ToString(string.IsNullOrEmpty(element.DateFormat) ? "yyyy-MM-dd" : element.DateFormat);
+        else if (element.DynamicType == "LunarDate") text = "农历 八月十五";
+        else if (element.DynamicType == "DayOfWeek") text = DateTime.Now.ToString("dddd");
+
+        Color color;
+        try { color = (Color)ColorConverter.ConvertFromString(element.Color); }
+        catch { color = Colors.White; }
+
+        var tb = new TextBlock
+        {
+            Text = text,
+            FontSize = element.FontSize,
+            FontFamily = new FontFamily(element.FontFamily),
+            Foreground = new SolidColorBrush(color),
+            FontWeight = element.Bold ? FontWeights.Bold : FontWeights.Normal,
+            FontStyle = element.Italic ? FontStyles.Italic : FontStyles.Normal,
+            Cursor = Cursors.SizeAll,
+            Tag = element
+        };
+
+        if (element.Underline)
+        {
+            tb.TextDecorations = TextDecorations.Underline;
+        }
+
+        tb.TextAlignment = element.Alignment switch
+        {
+            "Center" => TextAlignment.Center,
+            "Right" => TextAlignment.Right,
+            _ => TextAlignment.Left
+        };
+
+        return tb;
+    }
+
+    private void SelectElement(TextElementState? element)
+    {
+        _selectedElement = element;
+        UpdateSelectionBorder();
+        UpdatePropertiesPanel();
+    }
+
+    private void UpdateSelectionBorder()
+    {
+        if (_selectedElement == null || _isPreviewMode)
+        {
+            SelectionBorder.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        TextBlock? target = null;
+        foreach (UIElement child in MainCanvas.Children)
+        {
+            if (child is TextBlock tb && tb.Tag == _selectedElement)
+            {
+                target = tb;
+                break;
+            }
+        }
+
+        if (target != null)
+        {
+            SelectionBorder.Visibility = Visibility.Visible;
+            Canvas.SetLeft(SelectionBorder, _selectedElement.X - 4);
+            Canvas.SetTop(SelectionBorder, _selectedElement.Y - 4);
+            Canvas.SetZIndex(SelectionBorder, 9999);
+
+            target.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            SelectionBorder.Width = Math.Max(20, target.ActualWidth + 8);
+            SelectionBorder.Height = Math.Max(20, target.ActualHeight + 8);
+        }
+        else
+        {
+            SelectionBorder.Visibility = Visibility.Collapsed;
         }
     }
-    catch (Exception ex)
+
+    private void StartElementDrag(MouseButtonEventArgs e)
     {
-        System.Diagnostics.Debug.WriteLine($"Error changing rotation settings: {ex.Message}");
+        if (_selectedElement == null || _isPreviewMode) return;
+
+        _isDraggingElement = true;
+        _dragStartPoint = e.GetPosition(MainCanvas);
+        _dragStartElementX = _selectedElement.X;
+        _dragStartElementY = _selectedElement.Y;
+
+        PushUndoSnapshot();
+        Mouse.Capture(MainCanvas);
+        MainCanvas.MouseMove += MainCanvas_MouseMove;
+        MainCanvas.MouseLeftButtonUp += MainCanvas_MouseLeftButtonUp;
     }
-}
 
-    #region Dynamic Text Helpers
+    private void MainCanvas_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_isDraggingElement && _selectedElement != null)
+        {
+            Point current = e.GetPosition(MainCanvas);
+            double deltaX = current.X - _dragStartPoint.X;
+            double deltaY = current.Y - _dragStartPoint.Y;
 
-    private string GetGregorianDateString() => DateTime.Now.ToString("yyyy年M月d日");
+            _selectedElement.X = Math.Max(0, _dragStartElementX + deltaX);
+            _selectedElement.Y = Math.Max(0, _dragStartElementY + deltaY);
 
-    private string GetLunarDateString()
+            PositionXTextBox.Text = Math.Round(_selectedElement.X).ToString();
+            PositionYTextBox.Text = Math.Round(_selectedElement.Y).ToString();
+
+            RenderCanvasElements();
+            MarkDirty();
+        }
+    }
+
+    private void MainCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isDraggingElement)
+        {
+            _isDraggingElement = false;
+            Mouse.Capture(null);
+            MainCanvas.MouseMove -= MainCanvas_MouseMove;
+            MainCanvas.MouseLeftButtonUp -= MainCanvas_MouseLeftButtonUp;
+        }
+    }
+
+    private void UpdatePropertiesPanel()
+    {
+        _isInitializing = true;
+        try
+        {
+            if (_selectedElement == null)
+            {
+                SelectedElementTag.Text = "● 未选中任何元素";
+                ContentTextBox.Text = "";
+                PositionXTextBox.Text = "0";
+                PositionYTextBox.Text = "0";
+                return;
+            }
+
+            SelectedElementTag.Text = $"● {_selectedElement.Text}";
+
+            FontFamilyComboBox.SelectedItem = _selectedElement.FontFamily;
+            FontSizeSlider.Value = _selectedElement.FontSize;
+            FontSizeTextBox.Text = _selectedElement.FontSize.ToString();
+
+            BoldToggle.IsChecked = _selectedElement.Bold;
+            ItalicToggle.IsChecked = _selectedElement.Italic;
+            UnderlineToggle.IsChecked = _selectedElement.Underline;
+
+            AlignLeftRadio.IsChecked = _selectedElement.Alignment == "Left";
+            AlignCenterRadio.IsChecked = _selectedElement.Alignment == "Center";
+            AlignRightRadio.IsChecked = _selectedElement.Alignment == "Right";
+
+            PositionXTextBox.Text = Math.Round(_selectedElement.X).ToString();
+            PositionYTextBox.Text = Math.Round(_selectedElement.Y).ToString();
+
+            ShadowCheckBox.IsChecked = _selectedElement.ShadowEnabled;
+            StrokeCheckBox.IsChecked = _selectedElement.StrokeEnabled;
+            BackgroundCheckBox.IsChecked = _selectedElement.BackgroundEnabled;
+
+            ContentTextBox.Text = _selectedElement.Text;
+        }
+        finally
+        {
+            _isInitializing = false;
+        }
+    }
+
+    private void AddElement(TextElementState element)
+    {
+        if (_currentWallpaper == null) return;
+
+        PushUndoSnapshot();
+        _currentWallpaper.TextElements.Add(element);
+        SelectElement(element);
+        RenderCanvasElements();
+        MarkDirty();
+    }
+
+    private void AddGregorianDateButton_Click(object sender, RoutedEventArgs e)
+    {
+        AddElement(new TextElementState
+        {
+            Text = "{公历日期}",
+            DynamicType = "GregorianDate",
+            X = 100,
+            Y = 100,
+            FontSize = 48,
+            Color = "#FFFFFF"
+        });
+    }
+
+    private void AddLunarDateButton_Click(object sender, RoutedEventArgs e)
+    {
+        AddElement(new TextElementState
+        {
+            Text = "{农历日期}",
+            DynamicType = "LunarDate",
+            X = 100,
+            Y = 160,
+            FontSize = 36,
+            Color = "#2563EB"
+        });
+    }
+
+    private void AddDayOfWeekButton_Click(object sender, RoutedEventArgs e)
+    {
+        AddElement(new TextElementState
+        {
+            Text = "{星期}",
+            DynamicType = "DayOfWeek",
+            X = 100,
+            Y = 220,
+            FontSize = 36,
+            Color = "#EF4444"
+        });
+    }
+
+    private void AddApiDataButton_Click(object sender, RoutedEventArgs e)
+    {
+        var element = new TextElementState
+        {
+            Text = "{API数据}",
+            DynamicType = "Api",
+            X = 100,
+            Y = 280,
+            FontSize = 48,
+            Color = "#10B981"
+        };
+
+        var wizard = new ApiDataWizardWindow(element) { Owner = this };
+        if (wizard.ShowDialog() == true)
+        {
+            AddElement(element);
+        }
+    }
+
+    private void AddCustomTextButton_Click(object sender, RoutedEventArgs e)
+    {
+        AddElement(new TextElementState
+        {
+            Text = "新自定义文本",
+            DynamicType = null,
+            X = 100,
+            Y = 340,
+            FontSize = 36,
+            Color = "#FFFFFF"
+        });
+    }
+
+    private void PushUndoSnapshot()
+    {
+        if (_currentWallpaper != null)
+        {
+            _undoManager.PushSnapshot(_currentWallpaper.TextElements);
+        }
+    }
+
+    private void UndoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentWallpaper == null) return;
+        var prev = _undoManager.Undo(_currentWallpaper.TextElements);
+        if (prev != null)
+        {
+            _currentWallpaper.TextElements = prev;
+            RenderCanvasElements();
+            MarkDirty();
+        }
+    }
+
+    private void RedoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentWallpaper == null) return;
+        var next = _undoManager.Redo(_currentWallpaper.TextElements);
+        if (next != null)
+        {
+            _currentWallpaper.TextElements = next;
+            RenderCanvasElements();
+            MarkDirty();
+        }
+    }
+
+    private void UpdateUndoRedoButtons()
+    {
+        UndoButton.IsEnabled = _undoManager.CanUndo;
+        RedoButton.IsEnabled = _undoManager.CanRedo;
+    }
+
+    private void MarkDirty()
+    {
+        _isDirty = true;
+        UpdateWindowTitle();
+    }
+
+    private void UpdateWindowTitle()
+    {
+        string name = _currentWallpaper?.Name ?? "新建壁纸";
+        Title = _isDirty ? $"NewDesk 桌面编辑器 - {name} *" : $"NewDesk 桌面编辑器 - {name}";
+    }
+
+    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        SaveCurrentWallpaper();
+    }
+
+    private void SaveCurrentWallpaper()
     {
         try
         {
-            var calendar = new ChineseLunisolarCalendar();
-            var date = DateTime.Now;
-            var year = calendar.GetYear(date);
-            var month = calendar.GetMonth(date);
-            var day = calendar.GetDayOfMonth(date);
-            var leapMonth = calendar.GetLeapMonth(year);
+            string path = AppDataPath.WallpapersFile;
+            string json = JsonSerializer.Serialize(_wallpapers, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, json);
 
-            string[] lunarMonthNames = { "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月" };
-            string[] lunarDayNames = { "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十" };
-
-            string monthString;
-            if (leapMonth > 0 && month >= leapMonth)
-            {
-                if (month == leapMonth)
-                {
-                    // 闰月，显示前一个月的名字加上“闰”
-                    int prevMonthIndex = month - 2;
-                    if (prevMonthIndex >= 0 && prevMonthIndex < lunarMonthNames.Length)
-                        monthString = "闰" + lunarMonthNames[prevMonthIndex];
-                    else
-                        monthString = "闰月";
-                }
-                else
-                {
-                    // 闰月之后的月份，索引需要减1（因为插入了一个闰月）
-                    int realMonthIndex = month - 2;
-                    if (realMonthIndex >= 0 && realMonthIndex < lunarMonthNames.Length)
-                        monthString = lunarMonthNames[realMonthIndex];
-                    else
-                         monthString = "未知月";
-                }
-            }
-            else
-            {
-                if (month - 1 >= 0 && month - 1 < lunarMonthNames.Length)
-                    monthString = lunarMonthNames[month - 1];
-                else
-                    monthString = "未知月";
-            }
-
-            string dayString;
-            if (day - 1 >= 0 && day - 1 < lunarDayNames.Length)
-                dayString = lunarDayNames[day - 1];
-            else
-                dayString = "未知日";
-
-            return $"农历 {monthString}{dayString}";
+            _isDirty = false;
+            UpdateWindowTitle();
+            ToastManager.Show("保存成功", "壁纸配置已保存！", ToastType.Success);
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Lunar Date Error: {ex.Message}");
-            return "农历日期获取失败";
+            ToastManager.Show("保存错误", ex.Message, ToastType.Error);
         }
     }
 
-    private string GetDayOfWeekString() => DateTime.Now.ToString("dddd", new CultureInfo("zh-CN"));
-
-    private static string GetMB(long b) => (b / 1024.0 / 1024.0).ToString("F2") + " MB";
-    private static string GetGB(long b) => (b / 1024.0 / 1024.0 / 1024.0).ToString("F2") + " GB";
-    private static string GetSize(string bstr)
+    private async void ApplyToDesktopButton_Click(object sender, RoutedEventArgs e)
     {
-        if (long.TryParse(bstr, out long b))
-        {
-            if (b >= 1024 * 1024 * 1024) return (b / 1024.0 / 1024.0 / 1024.0).ToString("F2") + " GB";
-            return (b / 1024.0 / 1024.0).ToString("F2") + " MB";
-        }
-        return bstr;
-    }
+        if (_currentWallpaper == null) return;
 
-    private async Task<string> GetApiTextAsync(ApiConfig apiConfig)
-    {
+        SaveCurrentWallpaper();
         try
         {
-            string content = await HttpClient.GetStringAsync(apiConfig.Url);
-            var match = Regex.Match(content, apiConfig.Regex);
-            if (!match.Success) return "(Regex Fail)";
+            var settings = SettingsService.LoadSettings();
+            settings.CurrentWallpaperName = _currentWallpaper.Name;
+            SettingsService.SaveSettings(settings);
 
-            string extractedValue = match.Groups.Count > 1 ? match.Groups[1].Value : match.Value;
-
-            if (apiConfig.Formatting == "流量单位转换 (B -> MB/GB)")
-            {
-                extractedValue = GetSize(extractedValue);
-            }
-            return apiConfig.Prefix + extractedValue + apiConfig.Suffix;
+            await WallpaperService.GenerateAndSetWallpaperAsync(_currentWallpaper);
+            ToastManager.Show("应用成功", $"“{_currentWallpaper.Name}”已成功设为当前 Windows 桌面壁纸。", ToastType.Success);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return "(API Fail)";
+            ToastManager.Show("应用失败", ex.Message, ToastType.Error);
         }
-    }
-
-    #endregion
-
-    private void LoadSystemFonts()
-    {
-        var fonts = new[] { "宋体", "楷体", "微软雅黑", "Arial", "Times New Roman", "Verdana" };
-        foreach (var font in fonts) FontFamilyComboBox.Items.Add(new FontFamily(font));
-        FontFamilyComboBox.SelectedIndex = 0;
-    }
-
-    private void LoadWallpapers()
-    {
-        if (!File.Exists(WallpapersPath)) return;
-        try
-        {
-            string json = File.ReadAllText(WallpapersPath);
-            _wallpaperStates = JsonSerializer.Deserialize<List<WallpaperState>>(json) ?? new List<WallpaperState>();
-            WallpaperListBox.ItemsSource = _wallpaperStates.Select(w => w.Name);
-        }
-        catch (Exception ex) { Services.ToastManager.Show("错误", $"加载壁纸列表时出错: {ex.Message}", Services.ToastType.Error); }
-    }
-
-    private void SaveWallpapers()
-    {
-        try
-        {
-            string json = JsonSerializer.Serialize(_wallpaperStates, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(WallpapersPath, json);
-        }
-        catch (Exception ex) { Services.ToastManager.Show("错误", $"保存壁纸列表时出错: {ex.Message}", Services.ToastType.Error); }
     }
 
     private void ImportImageButton_Click(object sender, RoutedEventArgs e)
     {
-        var openFileDialog = new OpenFileDialog
+        try
         {
-            Filter = "Image files (*.png;*.jpeg;*.jpg;*.bmp)|*.png;*.jpeg;*.jpg;*.bmp|All files (*.*)|*.*"
-        };
-        if (openFileDialog.ShowDialog() == true)
-        {
-            try
+            var dialog = new OpenFileDialog
             {
-                _backgroundImagePath = openFileDialog.FileName;
-                var bitmap = new BitmapImage();
-                bitmap.BeginInit();
-                bitmap.UriSource = new Uri(_backgroundImagePath);
-                bitmap.CacheOption = BitmapCacheOption.OnLoad; // Load fully so we can access width/height
-                bitmap.EndInit();
+                Filter = "图片文件 (*.jpg;*.jpeg;*.png;*.bmp)|*.jpg;*.jpeg;*.png;*.bmp"
+            };
 
-                BackgroundImageBrush.ImageSource = bitmap;
-                
-                // Update Canvas size to match image dimensions for 1:1 editing
-                MainCanvas.Width = bitmap.PixelWidth;
-                MainCanvas.Height = bitmap.PixelHeight;
-            }
-            catch (Exception ex)
+            if (dialog.ShowDialog() == true)
             {
-                Services.ToastManager.Show("错误", $"无法加载图片: {ex.Message}", Services.ToastType.Error);
-            }
-        }
-    }
-
-    private void AddTextButton_Click(object sender, RoutedEventArgs e)
-    {
-        var selectedTypeItem = TextTypeComboBox.SelectedItem as ComboBoxItem;
-        if (selectedTypeItem == null) return;
-
-        string selectedType = selectedTypeItem.Content.ToString() ?? string.Empty;
-        string text = "";
-        object? tag = null;
-
-        switch (selectedType)
-        {
-            case "公历日期":
-                tag = "GregorianDate";
-                text = "{公历日期}";
-                break;
-            case "农历日期":
-                tag = "LunarDate";
-                text = "{农历日期}";
-                break;
-            case "星期":
-                tag = "DayOfWeek";
-                text = "{星期}";
-                break;
-            case "来自API":
-                var apiDialog = new ApiTextConfigWindow();
-                if (apiDialog.ShowDialog() == true && apiDialog.Config != null)
+                string name = Path.GetFileNameWithoutExtension(dialog.FileName);
+                var newState = new WallpaperState
                 {
-                    text = "{API数据}";
-                    tag = apiDialog.Config;
-                }
-                else return; // User cancelled
-                break;
-            default: // 静态文本
-                text = "双击编辑";
-                break;
-        }
+                    Name = name,
+                    BackgroundImagePath = dialog.FileName,
+                    DesignWidth = 1920,
+                    DesignHeight = 1080
+                };
 
-        var newText = new TextBlock
-        {
-            Text = text,
-            Tag = tag,
-            FontSize = FontSizeSlider.Value,
-            FontFamily = (FontFamily)FontFamilyComboBox.SelectedItem,
-            Foreground = FontColorBrush.Clone(),
-            Cursor = Cursors.Hand
-        };
-
-        newText.MouseLeftButtonDown += TextBlock_MouseLeftButtonDown;
-        newText.MouseMove += TextBlock_MouseMove;
-        newText.MouseLeftButtonUp += TextBlock_MouseLeftButtonUp;
-
-        MainCanvas.Children.Add(newText);
-        Canvas.SetLeft(newText, 20);
-        Canvas.SetTop(newText, 20);
-        SelectText(newText);
-    }
-
-    private void TextBlock_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is TextBlock textBlock)
-        {
-            SelectText(textBlock);
-            e.Handled = true;
-            if (e.ClickCount == 2) CreateEditTextBox(textBlock);
-            else
-            {
-                _draggedElement = textBlock;
-                _isDragging = true;
-                _mouseOffset = e.GetPosition(_draggedElement);
-                _draggedElement.CaptureMouse();
+                _wallpapers.Add(newState);
+                SelectWallpaper(newState);
+                SaveCurrentWallpaper();
+                FilterWallpaperList();
             }
         }
-    }
-
-    private void TextBlock_MouseMove(object sender, MouseEventArgs e)
-    {
-        if (_isDragging && _draggedElement != null && _draggedElement is TextBlock draggedText)
+        catch (Exception ex)
         {
-            Point currentPos = e.GetPosition(MainCanvas);
-            double newLeft = currentPos.X - _mouseOffset.X;
-            double newTop = currentPos.Y - _mouseOffset.Y;
-
-            // Smart Snapping Logic
-            if (SmartSnappingCheckBox.IsChecked == true)
-            {
-                const double SnapThreshold = 10.0;
-                
-                // Snap to Canvas Edges
-                if (Math.Abs(newLeft) < SnapThreshold) newLeft = 0; // Left
-                else if (Math.Abs(newLeft - (MainCanvas.Width - draggedText.ActualWidth)) < SnapThreshold) newLeft = MainCanvas.Width - draggedText.ActualWidth; // Right
-                else if (Math.Abs(newLeft - (MainCanvas.Width - draggedText.ActualWidth) / 2) < SnapThreshold) newLeft = (MainCanvas.Width - draggedText.ActualWidth) / 2; // Center H
-
-                if (Math.Abs(newTop) < SnapThreshold) newTop = 0; // Top
-                else if (Math.Abs(newTop - (MainCanvas.Height - draggedText.ActualHeight)) < SnapThreshold) newTop = MainCanvas.Height - draggedText.ActualHeight; // Bottom
-                else if (Math.Abs(newTop - (MainCanvas.Height - draggedText.ActualHeight) / 2) < SnapThreshold) newTop = (MainCanvas.Height - draggedText.ActualHeight) / 2; // Center V
-
-                // Snap to other elements
-                foreach (var child in MainCanvas.Children)
-                {
-                    if (child is TextBlock other && other != draggedText && other.Visibility == Visibility.Visible)
-                    {
-                        double otherLeft = Canvas.GetLeft(other);
-                        double otherTop = Canvas.GetTop(other);
-                        double otherRight = otherLeft + other.ActualWidth;
-                        double otherBottom = otherTop + other.ActualHeight;
-                        double otherCenterX = otherLeft + other.ActualWidth / 2;
-                        double otherCenterY = otherTop + other.ActualHeight / 2;
-
-                        double draggedRight = newLeft + draggedText.ActualWidth;
-                        double draggedBottom = newTop + draggedText.ActualHeight;
-                        double draggedCenterX = newLeft + draggedText.ActualWidth / 2;
-                        double draggedCenterY = newTop + draggedText.ActualHeight / 2;
-
-                        // Horizontal Snapping
-                        if (Math.Abs(newLeft - otherLeft) < SnapThreshold) newLeft = otherLeft; // Left-Left
-                        else if (Math.Abs(newLeft - otherRight) < SnapThreshold) newLeft = otherRight; // Left-Right
-                        else if (Math.Abs(draggedRight - otherLeft) < SnapThreshold) newLeft = otherLeft - draggedText.ActualWidth; // Right-Left
-                        else if (Math.Abs(draggedRight - otherRight) < SnapThreshold) newLeft = otherRight - draggedText.ActualWidth; // Right-Right
-                        else if (Math.Abs(draggedCenterX - otherCenterX) < SnapThreshold) newLeft = otherCenterX - draggedText.ActualWidth / 2; // Center-Center
-
-                        // Vertical Snapping
-                        if (Math.Abs(newTop - otherTop) < SnapThreshold) newTop = otherTop; // Top-Top
-                        else if (Math.Abs(newTop - otherBottom) < SnapThreshold) newTop = otherBottom; // Top-Bottom
-                        else if (Math.Abs(draggedBottom - otherTop) < SnapThreshold) newTop = otherTop - draggedText.ActualHeight; // Bottom-Top
-                        else if (Math.Abs(draggedBottom - otherBottom) < SnapThreshold) newTop = otherBottom - draggedText.ActualHeight; // Bottom-Bottom
-                         else if (Math.Abs(draggedCenterY - otherCenterY) < SnapThreshold) newTop = otherCenterY - draggedText.ActualHeight / 2; // Center-Center
-                    }
-                }
-            }
-
-            Canvas.SetLeft(_draggedElement, newLeft);
-            Canvas.SetTop(_draggedElement, newTop);
+            ToastManager.Show("导入错误", ex.Message, ToastType.Error);
         }
     }
 
-    private void TextBlock_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    private void DeleteElementButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_draggedElement != null)
+        if (_currentWallpaper != null && _selectedElement != null)
         {
-            _isDragging = false;
-            _draggedElement.ReleaseMouseCapture();
-            _draggedElement = null;
+            PushUndoSnapshot();
+            _currentWallpaper.TextElements.Remove(_selectedElement);
+            SelectElement(null);
+            RenderCanvasElements();
+            MarkDirty();
         }
     }
 
-    private void CreateEditTextBox(TextBlock textBlock)
+    private void FontProperty_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (textBlock.Visibility == Visibility.Collapsed) return;
-
-        if (textBlock.Tag is ApiConfig apiConfig)
-        {
-            var apiDialog = new ApiTextConfigWindow(apiConfig);
-            if (apiDialog.ShowDialog() == true && apiDialog.Config != null)
-            {
-                textBlock.Tag = apiDialog.Config;
-                // Optional: Update text immediately if we had a way to fetch it, 
-                // but for now keeping it as is or resetting to placeholder is fine.
-                // textBlock.Text = "{API数据}"; 
-                Services.ToastManager.Show("提示", "API配置已更新，将在保存或刷新时生效。", Services.ToastType.Info);
-            }
-            return;
-        }
-
-        if (textBlock.Tag != null)
-        {
-             Services.ToastManager.Show("提示", "此动态文本不支持编辑内容。", Services.ToastType.Warning);
-             return;
-        }
-
-        var editPanel = new StackPanel { Orientation = Orientation.Horizontal };
-        var editTextBox = new TextBox { Text = textBlock.Text, FontSize = textBlock.FontSize, FontFamily = textBlock.FontFamily, Foreground = Brushes.Black, Background = Brushes.White, Width = Math.Max(textBlock.ActualWidth, 100) + 20, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap };
-        var saveButton = new Button { Content = "保存", Margin = new Thickness(5, 0, 0, 0) };
-        editPanel.Children.Add(editTextBox);
-        editPanel.Children.Add(saveButton);
-        Canvas.SetLeft(editPanel, Canvas.GetLeft(textBlock));
-        Canvas.SetTop(editPanel, Canvas.GetTop(textBlock));
-        textBlock.Visibility = Visibility.Collapsed;
-        MainCanvas.Children.Add(editPanel);
-        saveButton.Click += (s, ev) => FinishEditing(editPanel, editTextBox, textBlock);
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, new Action(() => { editTextBox.Focus(); editTextBox.SelectAll(); }));
-    }
-
-    private void FinishEditing(StackPanel editPanel, TextBox editTextBox, TextBlock textBlock)
-    {
-        if (!MainCanvas.Children.Contains(editPanel)) return;
-        textBlock.Text = editTextBox.Text;
-        textBlock.Visibility = Visibility.Visible;
-        MainCanvas.Children.Remove(editPanel);
-        SelectText(textBlock);
-    }
-
-    private void SelectText(TextBlock? textBlock)
-    {
-        if (_selectionAdorner != null) AdornerLayer.GetAdornerLayer(_selectionAdorner.AdornedElement)?.Remove(_selectionAdorner);
-        _selectionAdorner = null;
-        _selectedText = textBlock;
-        if (_selectedText != null)
-        {
-            FontSizeSlider.Value = _selectedText.FontSize;
-            FontFamilyComboBox.SelectedItem = _selectedText.FontFamily;
-            FontColorBrush.Color = (_selectedText.Foreground as SolidColorBrush)?.Color ?? Colors.White;
-            var adornerLayer = AdornerLayer.GetAdornerLayer(_selectedText);
-            if (adornerLayer != null)
-            {
-                _selectionAdorner = new SelectionAdorner(_selectedText);
-                adornerLayer.Add(_selectionAdorner);
-            }
-        }
+        if (_isInitializing || _selectedElement == null) return;
+        PushUndoSnapshot();
+        _selectedElement.FontFamily = FontFamilyComboBox.SelectedItem?.ToString() ?? "Microsoft YaHei";
+        RenderCanvasElements();
+        MarkDirty();
     }
 
     private void FontSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_selectedText != null) { _selectedText.FontSize = e.NewValue; if(FontSizeValueTextBlock != null) FontSizeValueTextBlock.Text = ((int)e.NewValue).ToString(); }
+        if (_isInitializing || _selectedElement == null) return;
+        _selectedElement.FontSize = Math.Round(FontSizeSlider.Value);
+        FontSizeTextBox.Text = _selectedElement.FontSize.ToString();
+        RenderCanvasElements();
+        MarkDirty();
     }
 
-    private void FontFamilyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void FontSizeTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_selectedText != null && FontFamilyComboBox.SelectedItem is FontFamily fontFamily) _selectedText.FontFamily = fontFamily;
-    }
-
-    private void FontColorButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedText == null) return;
-        if (ColorPickerWindow.ShowDialog(out Color newColor)) { var newBrush = new SolidColorBrush(newColor); _selectedText.Foreground = newBrush; FontColorBrush.Color = newColor; }
-    }
-
-    private async void SetWallpaperButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (string.IsNullOrEmpty(_backgroundImagePath) || !File.Exists(_backgroundImagePath))
+        if (_isInitializing || _selectedElement == null) return;
+        if (double.TryParse(FontSizeTextBox.Text, out double size))
         {
-            Services.ToastManager.Show("提示", "请先导入一张图片。", Services.ToastType.Warning);
-            return;
+            PushUndoSnapshot();
+            _selectedElement.FontSize = Math.Clamp(size, 8, 300);
+            RenderCanvasElements();
+            MarkDirty();
         }
+    }
 
-        try
+    private void TextFormat_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing || _selectedElement == null) return;
+        PushUndoSnapshot();
+        _selectedElement.Bold = BoldToggle.IsChecked == true;
+        _selectedElement.Italic = ItalicToggle.IsChecked == true;
+        _selectedElement.Underline = UnderlineToggle.IsChecked == true;
+        RenderCanvasElements();
+        MarkDirty();
+    }
+
+    private void ColorPickerButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedElement == null) return;
+        if (ColorPickerWindow.ShowDialog(out Color newColor))
         {
-            var state = CreateStateFromCanvas();
-            
-            // Save current wallpaper name to settings so we can auto-load on startup
-            if (WallpaperListBox.SelectedItem is string name)
-            {
-                var settings = SettingsService.LoadSettings();
-                settings.CurrentWallpaperName = name;
-                SettingsService.SaveSettings(settings);
-            }
-
-            await WallpaperService.GenerateAndSetWallpaperAsync(state);
-            WallpaperService.StartAutoRefresh(state);
-
-            Services.ToastManager.Show("成功", "桌面背景已设置！", Services.ToastType.Success);
+            PushUndoSnapshot();
+            _selectedElement.Color = $"#{newColor.A:X2}{newColor.R:X2}{newColor.G:X2}{newColor.B:X2}";
+            RenderCanvasElements();
+            MarkDirty();
         }
-        catch (Exception ex) { Services.ToastManager.Show("错误", $"设置桌面时发生错误: {ex.Message}", Services.ToastType.Error); }
+    }
+
+    private void Align_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing || _selectedElement == null) return;
+        PushUndoSnapshot();
+        if (AlignLeftRadio.IsChecked == true) _selectedElement.Alignment = "Left";
+        else if (AlignCenterRadio.IsChecked == true) _selectedElement.Alignment = "Center";
+        else if (AlignRightRadio.IsChecked == true) _selectedElement.Alignment = "Right";
+        RenderCanvasElements();
+        MarkDirty();
+    }
+
+    private void Position_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isInitializing || _selectedElement == null) return;
+        if (double.TryParse(PositionXTextBox.Text, out double x) && double.TryParse(PositionYTextBox.Text, out double y))
+        {
+            _selectedElement.X = Math.Max(0, x);
+            _selectedElement.Y = Math.Max(0, y);
+            RenderCanvasElements();
+            MarkDirty();
+        }
+    }
+
+    private void QuickAlignLeft_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedElement == null) return;
+        PushUndoSnapshot();
+        _selectedElement.X = 50;
+        RenderCanvasElements();
+        UpdatePropertiesPanel();
+        MarkDirty();
+    }
+
+    private void QuickAlignCenterH_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedElement == null || _currentWallpaper == null) return;
+        PushUndoSnapshot();
+        _selectedElement.X = _currentWallpaper.DesignWidth / 2 - 100;
+        RenderCanvasElements();
+        UpdatePropertiesPanel();
+        MarkDirty();
+    }
+
+    private void QuickAlignRight_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedElement == null || _currentWallpaper == null) return;
+        PushUndoSnapshot();
+        _selectedElement.X = _currentWallpaper.DesignWidth - 250;
+        RenderCanvasElements();
+        UpdatePropertiesPanel();
+        MarkDirty();
+    }
+
+    private void QuickAlignTop_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedElement == null) return;
+        PushUndoSnapshot();
+        _selectedElement.Y = 50;
+        RenderCanvasElements();
+        UpdatePropertiesPanel();
+        MarkDirty();
+    }
+
+    private void QuickAlignCenterV_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedElement == null || _currentWallpaper == null) return;
+        PushUndoSnapshot();
+        _selectedElement.Y = _currentWallpaper.DesignHeight / 2 - 30;
+        RenderCanvasElements();
+        UpdatePropertiesPanel();
+        MarkDirty();
+    }
+
+    private void QuickAlignBottom_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedElement == null || _currentWallpaper == null) return;
+        PushUndoSnapshot();
+        _selectedElement.Y = _currentWallpaper.DesignHeight - 100;
+        RenderCanvasElements();
+        UpdatePropertiesPanel();
+        MarkDirty();
+    }
+
+    private void EffectCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing || _selectedElement == null) return;
+        PushUndoSnapshot();
+        _selectedElement.ShadowEnabled = ShadowCheckBox.IsChecked == true;
+        _selectedElement.StrokeEnabled = StrokeCheckBox.IsChecked == true;
+        _selectedElement.BackgroundEnabled = BackgroundCheckBox.IsChecked == true;
+        RenderCanvasElements();
+        MarkDirty();
+    }
+
+    private void ContentTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isInitializing || _selectedElement == null) return;
+        _selectedElement.Text = ContentTextBox.Text;
+        RenderCanvasElements();
+        MarkDirty();
+    }
+
+    private void TabRadio_Checked(object sender, RoutedEventArgs e)
+    {
+        if (PropertiesScrollViewer == null || LayersPanelContainer == null) return;
+        if (EditTabRadio.IsChecked == true)
+        {
+            PropertiesScrollViewer.Visibility = Visibility.Visible;
+            LayersPanelContainer.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            PropertiesScrollViewer.Visibility = Visibility.Collapsed;
+            LayersPanelContainer.Visibility = Visibility.Visible;
+            UpdateLayersList();
+        }
+    }
+
+    private void UpdateLayersList()
+    {
+        if (_currentWallpaper == null) return;
+        LayersListBox.ItemsSource = null;
+        LayersListBox.ItemsSource = _currentWallpaper.TextElements.OrderByDescending(e => e.ZIndex).ToList();
+    }
+
+    private void LayersListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LayersListBox.SelectedItem is TextElementState elem)
+        {
+            SelectElement(elem);
+        }
+    }
+
+    private void MoveLayerUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is TextElementState elem)
+        {
+            PushUndoSnapshot();
+            elem.ZIndex++;
+            RenderCanvasElements();
+            MarkDirty();
+        }
+    }
+
+    private void MoveLayerDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is TextElementState elem)
+        {
+            PushUndoSnapshot();
+            elem.ZIndex = Math.Max(0, elem.ZIndex - 1);
+            RenderCanvasElements();
+            MarkDirty();
+        }
+    }
+
+    private void ZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (ZoomText == null || CanvasBorder == null) return;
+        _zoomFactor = ZoomSlider.Value / 100.0;
+        ZoomText.Text = $"{Math.Round(ZoomSlider.Value)}%";
+
+        var transform = new ScaleTransform(_zoomFactor, _zoomFactor);
+        CanvasBorder.LayoutTransform = transform;
+    }
+
+    private void ZoomOutButton_Click(object sender, RoutedEventArgs e)
+    {
+        ZoomSlider.Value = Math.Max(25, ZoomSlider.Value - 15);
+    }
+
+    private void ZoomInButton_Click(object sender, RoutedEventArgs e)
+    {
+        ZoomSlider.Value = Math.Min(300, ZoomSlider.Value + 15);
+    }
+
+    private void ZoomFitButton_Click(object sender, RoutedEventArgs e)
+    {
+        FitToScreen();
+    }
+
+    private void FitToScreen()
+    {
+        if (_currentWallpaper == null || CanvasContainerGrid == null) return;
+        double availableW = CanvasContainerGrid.ActualWidth > 0 ? CanvasContainerGrid.ActualWidth - 40 : 800;
+        double availableH = CanvasContainerGrid.ActualHeight > 0 ? CanvasContainerGrid.ActualHeight - 40 : 500;
+
+        double fitScale = Math.Min(availableW / _currentWallpaper.DesignWidth, availableH / _currentWallpaper.DesignHeight);
+        ZoomSlider.Value = Math.Clamp(fitScale * 100.0, 25, 300);
+    }
+
+    private void AlignLeftCanvas_Click(object sender, RoutedEventArgs e) => QuickAlignLeft_Click(sender, e);
+    private void AlignCenterCanvas_Click(object sender, RoutedEventArgs e) => QuickAlignCenterH_Click(sender, e);
+    private void AlignRightCanvas_Click(object sender, RoutedEventArgs e) => QuickAlignRight_Click(sender, e);
+
+    private void PreviewButton_Click(object sender, RoutedEventArgs e)
+    {
+        _isPreviewMode = PreviewButton.IsChecked == true;
+        UpdateSelectionBorder();
+    }
+
+    private void CanvasContainer_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.Source == CanvasContainerGrid || e.Source == MainCanvas || e.Source == BackgroundImage)
+        {
+            SelectElement(null);
+        }
     }
 
     private void WallpaperListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (WallpaperListBox.SelectedItem is string name) { var state = _wallpaperStates.FirstOrDefault(w => w.Name == name); if (state != null) LoadStateOntoCanvas(state); }
-    }
-
-    private void SaveAsButton_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new InputDialog("请输入壁纸名称:");
-        if (dialog.ShowDialog() == true)
+        if (_isInitializing) return;
+        if (WallpaperListBox.SelectedItem is WallpaperState selected)
         {
-            var newState = CreateStateFromCanvas();
-            newState.Name = dialog.InputText;
-            _wallpaperStates.Add(newState);
-            SaveWallpapers();
-            WallpaperListBox.ItemsSource = _wallpaperStates.Select(w => w.Name).ToList();
-            WallpaperListBox.SelectedItem = newState.Name;
+            SelectWallpaper(selected);
         }
     }
 
-    private void UpdateButton_Click(object sender, RoutedEventArgs e)
+    private void WallpaperSearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (WallpaperListBox.SelectedItem is string name)
+        FilterWallpaperList();
+    }
+
+    private void RotationSettings_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing) return;
+        var settings = SettingsService.LoadSettings();
+        settings.IsWallpaperRotationEnabled = EnableRotationCheckBox.IsChecked == true;
+        settings.WallpaperRotationMode = RotationModeComboBox.SelectedIndex == 0 ? WallpaperRotationMode.Sequential : WallpaperRotationMode.Random;
+
+        settings.WallpaperRotationIntervalMinutes = RotationIntervalComboBox.SelectedIndex switch
         {
-            var state = _wallpaperStates.FirstOrDefault(w => w.Name == name);
-            if (state != null)
-            {
-                var updatedState = CreateStateFromCanvas();
-                state.BackgroundImagePath = updatedState.BackgroundImagePath;
-                state.TextElements = updatedState.TextElements;
-                state.RefreshIntervalMinutes = updatedState.RefreshIntervalMinutes; // Ensure interval is updated
-                SaveWallpapers();
-                Services.ToastManager.Show("提示", "壁纸更新成功！", Services.ToastType.Success);
-            }
-        }
-    }
-
-    private void DeleteButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (WallpaperListBox.SelectedItem is string name)
-        {
-            var state = _wallpaperStates.FirstOrDefault(w => w.Name == name);
-            if (state != null && MessageBox.Show($"确定要删除壁纸 '{name}' 吗？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
-            {
-                _wallpaperStates.Remove(state);
-                SaveWallpapers();
-                WallpaperListBox.ItemsSource = _wallpaperStates.Select(w => w.Name).ToList();
-                ClearCanvas();
-            }
-        }
-    }
-
-    #region Alignment
-    private void AlignLeftButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedText != null) Canvas.SetLeft(_selectedText, 10);
-    }
-
-    private void AlignRightButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedText != null) Canvas.SetLeft(_selectedText, MainCanvas.Width - _selectedText.ActualWidth - 10);
-    }
-
-    private void AlignTopButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedText != null) Canvas.SetTop(_selectedText, 10);
-    }
-
-    private void AlignBottomButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedText != null) Canvas.SetTop(_selectedText, MainCanvas.Height - _selectedText.ActualHeight - 10);
-    }
-
-    private void AlignCenterHButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedText != null) Canvas.SetLeft(_selectedText, (MainCanvas.Width - _selectedText.ActualWidth) / 2);
-    }
-
-    private void AlignCenterVButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedText != null) Canvas.SetTop(_selectedText, (MainCanvas.Height - _selectedText.ActualHeight) / 2);
-    }
-    #endregion
-
-    private WallpaperState CreateStateFromCanvas()
-    {
-        int interval = 0;
-        if (RefreshIntervalComboBox.SelectedIndex > 0)
-        {
-             string content = (RefreshIntervalComboBox.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "";
-             if (content.Contains("1 分钟")) interval = 1;
-             else if (content.Contains("5 分钟")) interval = 5;
-             else if (content.Contains("15 分钟")) interval = 15;
-             else if (content.Contains("30 分钟")) interval = 30;
-             else if (content.Contains("1 小时")) interval = 60;
-        }
-
-        return new WallpaperState
-        {
-            Name = (WallpaperListBox.SelectedItem as string) ?? "未命名",
-            BackgroundImagePath = _backgroundImagePath,
-            RefreshIntervalMinutes = interval,
-            DesignWidth = MainCanvas.Width,
-            DesignHeight = MainCanvas.Height,
-            TextElements = MainCanvas.Children.OfType<TextBlock>().Select(tb =>
-            {
-                var textState = new TextElementState { Text = tb.Text, X = Canvas.GetLeft(tb), Y = Canvas.GetTop(tb), FontSize = tb.FontSize, FontFamily = tb.FontFamily.Source, Color = (tb.Foreground as SolidColorBrush)?.Color.ToString() ?? "#FFFFFFFF" };
-                if (tb.Tag is string dynamicType) textState.DynamicType = dynamicType;
-                else if (tb.Tag is ApiConfig apiConfig)
-                {
-                    textState.DynamicType = "Api";
-                    textState.ApiUrl = apiConfig.Url;
-                    textState.ApiRegex = apiConfig.Regex;
-                    textState.ApiFormatting = apiConfig.Formatting;
-                    textState.ApiPrefix = apiConfig.Prefix;
-                    textState.ApiSuffix = apiConfig.Suffix;
-                }
-                return textState;
-            }).ToList()
+            0 => 5,
+            1 => 10,
+            2 => 15,
+            3 => 30,
+            4 => 60,
+            5 => 120,
+            _ => 15
         };
+
+        SettingsService.SaveSettings(settings);
     }
 
-    private void LoadStateOntoCanvas(WallpaperState state)
+    private void WallpaperMoreMenu_Click(object sender, RoutedEventArgs e)
     {
-        ClearCanvas();
-        if (!string.IsNullOrEmpty(state.BackgroundImagePath) && File.Exists(state.BackgroundImagePath))
+        if (sender is Button btn && btn.Tag is WallpaperState targetState)
         {
-            _backgroundImagePath = state.BackgroundImagePath;
-            BackgroundImageBrush.ImageSource = new BitmapImage(new Uri(state.BackgroundImagePath));
-        }
-        
-        // Set Interval
-        RefreshIntervalComboBox.SelectedIndex = 0;
-        if (state.RefreshIntervalMinutes == 1) RefreshIntervalComboBox.SelectedIndex = 1;
-        else if (state.RefreshIntervalMinutes == 5) RefreshIntervalComboBox.SelectedIndex = 2;
-        else if (state.RefreshIntervalMinutes == 15) RefreshIntervalComboBox.SelectedIndex = 3;
-        else if (state.RefreshIntervalMinutes == 30) RefreshIntervalComboBox.SelectedIndex = 4;
-        else if (state.RefreshIntervalMinutes == 60) RefreshIntervalComboBox.SelectedIndex = 5;
+            var cm = new ContextMenu();
 
-        foreach (var textState in state.TextElements)
-        {
-            object? tag = null;
-            if (textState.DynamicType == "Api") tag = new ApiConfig 
-            { 
-                Url = textState.ApiUrl ?? "", 
-                Regex = textState.ApiRegex ?? "", 
-                Formatting = textState.ApiFormatting ?? "",
-                Prefix = textState.ApiPrefix ?? "",
-                Suffix = textState.ApiSuffix ?? ""
+            var renameItem = new MenuItem { Header = "✏ 重命名" };
+            renameItem.Click += (s, ev) =>
+            {
+                var dialog = new InputDialog("重命名壁纸", "请输入新的壁纸名称：", targetState.Name) { Owner = this };
+                if (dialog.ShowDialog() == true && !string.IsNullOrEmpty(dialog.InputText))
+                {
+                    targetState.Name = dialog.InputText;
+                    SaveCurrentWallpaper();
+                    FilterWallpaperList();
+                }
             };
-            else if (!string.IsNullOrEmpty(textState.DynamicType)) tag = textState.DynamicType;
 
-            var textBlock = new TextBlock { Text = textState.Text, Tag = tag, FontSize = textState.FontSize, FontFamily = new FontFamily(textState.FontFamily), Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(textState.Color)), Cursor = Cursors.Hand };
-            textBlock.MouseLeftButtonDown += TextBlock_MouseLeftButtonDown;
-            textBlock.MouseMove += TextBlock_MouseMove;
-            textBlock.MouseLeftButtonUp += TextBlock_MouseLeftButtonUp;
-            MainCanvas.Children.Add(textBlock);
-            Canvas.SetLeft(textBlock, textState.X);
-            Canvas.SetTop(textBlock, textState.Y);
+            var duplicateItem = new MenuItem { Header = "📋 复制壁纸" };
+            duplicateItem.Click += (s, ev) =>
+            {
+                var copyState = new WallpaperState
+                {
+                    Name = $"{targetState.Name} (副本)",
+                    BackgroundImagePath = targetState.BackgroundImagePath,
+                    DesignWidth = targetState.DesignWidth,
+                    DesignHeight = targetState.DesignHeight,
+                    TextElements = targetState.TextElements.Select(elem => elem.Clone()).ToList()
+                };
+                _wallpapers.Add(copyState);
+                SaveCurrentWallpaper();
+                FilterWallpaperList();
+            };
+
+            var applyItem = new MenuItem { Header = "↻ 设为当前壁纸" };
+            applyItem.Click += async (s, ev) =>
+            {
+                SelectWallpaper(targetState);
+                await WallpaperService.GenerateAndSetWallpaperAsync(targetState);
+                ToastManager.Show("成功", $"已设置壁纸“{targetState.Name}”。", ToastType.Success);
+            };
+
+            var deleteItem = new MenuItem { Header = "🗑 删除壁纸" };
+            deleteItem.Click += (s, ev) =>
+            {
+                var confirm = new ConfirmDialog("删除壁纸", $"确定要删除“{targetState.Name}”吗？", isDanger: true) { Owner = this };
+                if (confirm.ShowDialog() == true)
+                {
+                    _wallpapers.Remove(targetState);
+                    SaveCurrentWallpaper();
+                    FilterWallpaperList();
+                }
+            };
+
+            cm.Items.Add(renameItem);
+            cm.Items.Add(duplicateItem);
+            cm.Items.Add(applyItem);
+            cm.Items.Add(new Separator());
+            cm.Items.Add(deleteItem);
+
+            cm.IsOpen = true;
         }
-    }
-
-    private void ClearCanvas()
-    {
-        SelectText(null);
-        _backgroundImagePath = null;
-        BackgroundImageBrush.ImageSource = null;
-        MainCanvas.Children.Clear();
     }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Delete && _selectedText != null)
+        if (Keyboard.Modifiers == ModifierKeys.Control)
         {
-            if (_selectionAdorner != null) AdornerLayer.GetAdornerLayer(_selectionAdorner.AdornedElement)?.Remove(_selectionAdorner);
-            MainCanvas.Children.Remove(_selectedText);
-            _selectedText = null;
-            _selectionAdorner = null;
+            if (e.Key == Key.Z)
+            {
+                UndoButton_Click(sender, e);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Y)
+            {
+                RedoButton_Click(sender, e);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.S)
+            {
+                SaveCurrentWallpaper();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.D && _selectedElement != null)
+            {
+                AddElement(_selectedElement.Clone());
+                e.Handled = true;
+            }
+            else if (e.Key == Key.D0)
+            {
+                FitToScreen();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.D1)
+            {
+                ZoomSlider.Value = 100;
+                e.Handled = true;
+            }
+        }
+        else if (e.Key == Key.Delete && _selectedElement != null)
+        {
+            DeleteElementButton_Click(sender, e);
+            e.Handled = true;
+        }
+        else if (_selectedElement != null)
+        {
+            double step = Keyboard.Modifiers == ModifierKeys.Shift ? 10 : 1;
+            if (e.Key == Key.Left) { _selectedElement.X = Math.Max(0, _selectedElement.X - step); e.Handled = true; }
+            else if (e.Key == Key.Right) { _selectedElement.X += step; e.Handled = true; }
+            else if (e.Key == Key.Up) { _selectedElement.Y = Math.Max(0, _selectedElement.Y - step); e.Handled = true; }
+            else if (e.Key == Key.Down) { _selectedElement.Y += step; e.Handled = true; }
+
+            if (e.Handled)
+            {
+                RenderCanvasElements();
+                UpdatePropertiesPanel();
+                MarkDirty();
+            }
         }
     }
-    
-    private class SelectionAdorner : Adorner
+
+    private void PromptSaveUnsavedChanges()
     {
-        public SelectionAdorner(UIElement adornedElement) : base(adornedElement) { }
-        protected override void OnRender(DrawingContext dc) => dc.DrawRectangle(null, new Pen(Brushes.DodgerBlue, 2), new Rect(AdornedElement.DesiredSize));
+        if (!_isDirty) return;
+        var confirm = new ConfirmDialog("未保存修改", "当前壁纸存在未保存的修改，是否立即保存？") { Owner = this };
+        if (confirm.ShowDialog() == true)
+        {
+            SaveCurrentWallpaper();
+        }
+    }
+
+    private void Window_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_isDirty)
+        {
+            var confirm = new ConfirmDialog("未保存修改", "检测到未保存的配置修改，确定要退出编辑器吗？", isDanger: true) { Owner = this };
+            if (confirm.ShowDialog() != true)
+            {
+                e.Cancel = true;
+            }
+        }
     }
 }
