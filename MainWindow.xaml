@@ -33,12 +33,16 @@
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="border" Property="Background" Value="{DynamicResource SidebarItemSelected}"/>
-                                <Setter Property="Foreground" Value="{DynamicResource SidebarTextSelected}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource SidebarTextSelected}"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
     </Window.Resources>
 
