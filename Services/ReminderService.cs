@@ -10,7 +10,6 @@ namespace NewDesk.Services;
 
 public static class ReminderService
 {
-    private static readonly ChineseLunisolarCalendar LunarCalendar = new();
     private static Timer? _timer;
     private static List<Reminder> _reminders = new();
     private static ReminderFrequency _frequency;
@@ -44,16 +43,20 @@ public static class ReminderService
                 }
                 else
                 {
-                    // Trigger Snooze Notification once and clear snooze state
                     reminder.SnoozeUntil = null;
                     NotifyAndSave(reminder, now, "Snooze 提醒时间已到！");
                     continue;
                 }
             }
 
-            if (reminder.ScheduleType == ReminderScheduleType.OneTime && reminder.DueAt.HasValue)
+            var nextOccurrence = ReminderScheduleCalculator.GetNextOccurrence(reminder, now);
+            if (!nextOccurrence.HasValue) continue;
+
+            reminder.NextReminderDate = nextOccurrence.Value;
+
+            if (reminder.ScheduleType == ReminderScheduleType.OneTime)
             {
-                DateTime due = reminder.DueAt.Value;
+                DateTime due = nextOccurrence.Value;
 
                 // 1. Check Advance Notification
                 if (reminder.DaysInAdvance > 0 && reminder.AdvanceNotifiedAt == null)
@@ -78,15 +81,26 @@ public static class ReminderService
             }
             else
             {
-                UpdateNextReminderDate(reminder);
+                DateTime occurrenceDate = nextOccurrence.Value.Date;
 
-                if (now.Date >= reminder.NextReminderDate.AddDays(-reminder.DaysInAdvance))
+                // 1. Check Advance Notification per occurrence
+                if (reminder.DaysInAdvance > 0 && reminder.LastAdvanceOccurrence?.Date != occurrenceDate)
                 {
-                    if (reminder.LastNotifiedDate.Date != now.Date)
+                    DateTime advanceStart = nextOccurrence.Value.AddDays(-reminder.DaysInAdvance);
+                    if (now >= advanceStart && now < nextOccurrence.Value)
                     {
-                        reminder.LastNotifiedDate = now;
-                        NotifyAndSave(reminder, now, $"今天是 {reminder.NextReminderDate:yyyy-MM-dd}！");
+                        reminder.LastAdvanceOccurrence = occurrenceDate;
+                        NotifyAndSave(reminder, now, $"提前 {reminder.DaysInAdvance} 天提醒！");
+                        continue;
                     }
+                }
+
+                // 2. Check Final Due Notification per occurrence
+                if (reminder.LastDueOccurrence?.Date != occurrenceDate && now >= nextOccurrence.Value)
+                {
+                    reminder.LastDueOccurrence = occurrenceDate;
+                    NotifyAndSave(reminder, now, $"提醒时间已到 ({reminder.Title})！");
+                    continue;
                 }
             }
         }
@@ -114,7 +128,7 @@ public static class ReminderService
     {
         string message = reminder.DueAt.HasValue
             ? $"[{statusText}] 设定时间: {reminder.DueAt.Value:yyyy-MM-dd HH:mm}"
-            : $"[{statusText}] 目标日期: {reminder.NextReminderDate:yyyy-MM-dd}";
+            : $"[{statusText}] 目标日期: {reminder.NextReminderDate:yyyy-MM-dd HH:mm}";
 
         var toast = new ReminderToastWindow(reminder.Title, message, autoClose: false);
         toast.Show();
@@ -128,72 +142,10 @@ public static class ReminderService
 
     public static void UpdateNextReminderDate(Reminder reminder)
     {
-        DateTime today = Clock.Now.Date;
-        int currentYear = today.Year;
-
-        DateTime reminderDateThisYear;
-        try
+        var next = ReminderScheduleCalculator.GetNextOccurrence(reminder, Clock.Now);
+        if (next.HasValue)
         {
-            if (reminder.IsLunar)
-            {
-                int leapMonth = LunarCalendar.GetLeapMonth(currentYear);
-                int month = reminder.Month;
-                if (leapMonth > 0 && month >= leapMonth)
-                {
-                    month++;
-                }
-                reminderDateThisYear = LunarCalendar.ToDateTime(currentYear, month, reminder.Day, 0, 0, 0, 0);
-            }
-            else
-            {
-                reminderDateThisYear = new DateTime(currentYear, reminder.Month, reminder.Day);
-            }
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            if (reminder.Month == 2 && reminder.Day == 29)
-            {
-                reminderDateThisYear = new DateTime(currentYear, 2, 28);
-            }
-            else
-            {
-                int daysInMonth = CultureInfo.CurrentCulture.Calendar.GetDaysInMonth(currentYear, reminder.Month);
-                reminderDateThisYear = new DateTime(currentYear, reminder.Month, daysInMonth);
-            }
-        }
-
-        if (reminderDateThisYear.AddDays(-reminder.DaysInAdvance) < today)
-        {
-            reminder.NextReminderDate = GetNextYearDate(reminder, currentYear + 1);
-        }
-        else
-        {
-            reminder.NextReminderDate = reminderDateThisYear;
-        }
-    }
-
-    private static DateTime GetNextYearDate(Reminder reminder, int year)
-    {
-        try
-        {
-            if (reminder.IsLunar)
-            {
-                int leapMonth = LunarCalendar.GetLeapMonth(year);
-                int month = reminder.Month;
-                if (leapMonth > 0 && month >= leapMonth)
-                {
-                    month++;
-                }
-                return LunarCalendar.ToDateTime(year, month, reminder.Day, 0, 0, 0, 0);
-            }
-            else
-            {
-                return new DateTime(year, reminder.Month, reminder.Day);
-            }
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            return GetNextYearDate(reminder, year + 1);
+            reminder.NextReminderDate = next.Value;
         }
     }
 }

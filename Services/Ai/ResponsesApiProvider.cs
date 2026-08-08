@@ -34,14 +34,21 @@ public class ResponsesApiProvider : IAiProvider
         Capabilities = new AiProviderCapabilities
         {
             SupportsStreaming = config.Streaming,
-            SupportsVision = true,
-            SupportsTools = true,
-            SupportsStructuredOutput = true,
+            SupportsVision = config.SupportsVisionOverride ?? true,
+            SupportsTools = config.SupportsToolsOverride ?? true,
+            SupportsStructuredOutput = config.SupportsStructuredOutputOverride ?? true,
             SupportsReasoning = true,
             SupportsResponsesApi = true,
             SupportsModelListing = true,
             IsLocal = isLocal
         };
+    }
+
+    private void ValidateEndpointBeforeSend()
+    {
+        string? secret = SecretStorageService.GetSecret(Config.SecretId);
+        bool transmitsSecrets = !string.IsNullOrEmpty(secret);
+        AiHttpSecurityGuard.ValidateRequest(Config.BaseUrl, transmitsSecrets);
     }
 
     private void ApplyHeaders(HttpRequestMessage request)
@@ -83,6 +90,8 @@ public class ResponsesApiProvider : IAiProvider
 
     public async Task<IReadOnlyList<AiModelInfo>> GetModelsAsync(CancellationToken cancellationToken = default)
     {
+        ValidateEndpointBeforeSend();
+
         string url = Config.BaseUrl.TrimEnd('/') + "/models";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         ApplyHeaders(req);
@@ -110,6 +119,8 @@ public class ResponsesApiProvider : IAiProvider
 
     public async Task<AiResponse> CompleteAsync(AiRequest request, CancellationToken cancellationToken = default)
     {
+        ValidateEndpointBeforeSend();
+
         string url = Config.BaseUrl.TrimEnd('/') + "/responses";
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         ApplyHeaders(req);
@@ -169,6 +180,8 @@ public class ResponsesApiProvider : IAiProvider
 
     public async IAsyncEnumerable<AiStreamChunk> StreamAsync(AiRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        ValidateEndpointBeforeSend();
+
         string url = Config.BaseUrl.TrimEnd('/') + "/responses";
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         ApplyHeaders(req);
@@ -272,7 +285,6 @@ public class ResponsesApiProvider : IAiProvider
                             break;
 
                         default:
-                            // Fallback generic parsing for OpenAI/proxy variations
                             if (root.TryGetProperty("delta", out var deltaObj))
                             {
                                 string? text = deltaObj.TryGetProperty("text", out var tElem) ? tElem.GetString() : null;
@@ -337,7 +349,7 @@ public class ResponsesApiProvider : IAiProvider
             reqBody["instructions"] = request.SystemPrompt;
         }
 
-        if (request.Tools != null && request.Tools.Count > 0)
+        if (Capabilities.SupportsTools && request.Tools != null && request.Tools.Count > 0)
         {
             reqBody["tools"] = ResponsesToolMapper.MapTools(request.Tools);
         }

@@ -24,16 +24,25 @@ public partial class RemindersView : UserControl
         try
         {
             _reminders = DataService.LoadReminders();
-            DateTime today = DateTime.Today;
+            DateTime now = DateTime.Now;
+            DateTime today = now.Date;
 
+            var activeReminders = new List<Reminder>();
             foreach (var r in _reminders)
             {
-                ReminderService.UpdateNextReminderDate(r);
+                if (r.IsCompleted && r.ScheduleType == ReminderScheduleType.OneTime) continue;
+
+                var nextOccurrence = ReminderScheduleCalculator.GetNextOccurrence(r, now);
+                if (nextOccurrence.HasValue)
+                {
+                    r.NextReminderDate = nextOccurrence.Value;
+                    activeReminders.Add(r);
+                }
             }
 
-            var todayList = _reminders.Where(r => r.NextReminderDate.Date == today).OrderBy(r => r.NextReminderDate).ToList();
-            var upcomingList = _reminders.Where(r => r.NextReminderDate.Date > today && r.NextReminderDate.Date <= today.AddDays(30)).OrderBy(r => r.NextReminderDate).ToList();
-            var laterList = _reminders.Where(r => r.NextReminderDate.Date > today.AddDays(30)).OrderBy(r => r.NextReminderDate).ToList();
+            var todayList = activeReminders.Where(r => r.NextReminderDate.Date == today).OrderBy(r => r.NextReminderDate).ToList();
+            var upcomingList = activeReminders.Where(r => r.NextReminderDate.Date > today && r.NextReminderDate.Date <= today.AddDays(30)).OrderBy(r => r.NextReminderDate).ToList();
+            var laterList = activeReminders.Where(r => r.NextReminderDate.Date > today.AddDays(30)).OrderBy(r => r.NextReminderDate).ToList();
 
             var itemTemplate = (DataTemplate)Resources["ReminderItemTemplate"];
 
@@ -67,13 +76,16 @@ public partial class RemindersView : UserControl
             Id = Guid.NewGuid(),
             Month = DateTime.Now.Month,
             Day = DateTime.Now.Day,
-            DaysInAdvance = 0
+            DaysInAdvance = 1,
+            ScheduleType = ReminderScheduleType.OneTime,
+            DueAt = DateTime.Now.Date.AddDays(1).AddHours(9),
+            TimeOfDay = new TimeSpan(9, 0, 0)
         };
 
         var editor = new ReminderEditorWindow(reminder) { Owner = Window.GetWindow(this) };
         if (editor.ShowDialog() == true)
         {
-            _reminders.Add(reminder);
+            _reminders.Add(editor.EditedReminder);
             SaveAndReload();
             ToastManager.Show("成功", "已创建新提醒事项。", ToastType.Success);
         }
@@ -91,6 +103,11 @@ public partial class RemindersView : UserControl
             var editor = new ReminderEditorWindow(reminder) { Owner = Window.GetWindow(this) };
             if (editor.ShowDialog() == true)
             {
+                int index = _reminders.FindIndex(r => r.Id == reminder.Id);
+                if (index >= 0)
+                {
+                    _reminders[index] = editor.EditedReminder;
+                }
                 SaveAndReload();
                 ToastManager.Show("成功", "已修改提醒事项。", ToastType.Success);
             }

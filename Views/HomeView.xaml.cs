@@ -46,21 +46,32 @@ public partial class HomeView : UserControl
                 EmptyStateCard.Visibility = Visibility.Collapsed;
             }
 
-            // Reminders status
+            // Reminders status using ReminderScheduleCalculator
             var reminders = DataService.LoadReminders();
             int todayCount = 0;
-            DateTime today = DateTime.Today;
+            DateTime now = DateTime.Now;
+            DateTime today = now.Date;
+            var activeOccurrences = new List<(Reminder Reminder, DateTime NextDate)>();
+
             foreach (var r in reminders)
             {
-                ReminderService.UpdateNextReminderDate(r);
-                if (r.NextReminderDate.Date == today)
+                if (r.IsCompleted) continue;
+
+                var next = ReminderScheduleCalculator.GetNextOccurrence(r, now);
+                if (next.HasValue)
                 {
-                    todayCount++;
+                    r.NextReminderDate = next.Value;
+                    activeOccurrences.Add((r, next.Value));
+                    if (next.Value.Date == today)
+                    {
+                        todayCount++;
+                    }
                 }
             }
+
             ReminderCountText.Text = $"共 {reminders.Count} 个提醒 （今天 {todayCount} 个）";
-            var next = reminders.OrderBy(r => r.NextReminderDate).FirstOrDefault();
-            ReminderNextText.Text = next != null ? $"下一个：{next.NextReminderDate:MM-dd} {next.Title}" : "下一个提醒：暂无";
+            var nextItem = activeOccurrences.OrderBy(x => x.NextDate).FirstOrDefault();
+            ReminderNextText.Text = nextItem.Reminder != null ? $"下一个：{nextItem.NextDate:MM-dd HH:mm} {nextItem.Reminder.Title}" : "下一个提醒：暂无";
 
             // Wallpaper status
             WallpaperCurrentText.Text = !string.IsNullOrEmpty(settings.CurrentWallpaperName)
@@ -71,7 +82,7 @@ public partial class HomeView : UserControl
                 : "自动轮播：未开启";
 
             // System status
-            SysHotkeyStatusText.Text = "✓ 全局快捷键：Ctrl + Alt + D";
+            SysHotkeyStatusText.Text = $"✓ 全局快捷键：{settings.MainWindowHotkey}";
             SysStartupStatusText.Text = settings.StartupBehavior == StartupBehavior.Tray
                 ? "✓ 启动行为：后台托盘运行"
                 : "✓ 启动行为：常规打开主窗口";

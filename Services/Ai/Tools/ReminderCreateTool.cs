@@ -18,9 +18,11 @@ public class ReminderCreateTool : IAiTool
         properties = new
         {
             title = new { type = "string", description = "提醒事项标题" },
-            dueAt = new { type = "string", description = "提醒到期时间，格式为 ISO 8601 (例: 2026-08-09T15:00:00)" },
-            month = new { type = "integer", description = "公历月份 (1-12，可选)" },
-            day = new { type = "integer", description = "公历日期 (1-31，可选)" },
+            scheduleType = new { type = "string", enumValues = new[] { "OneTime", "Yearly", "LunarYearly" }, description = "提醒类型：OneTime (一次性), Yearly (公历每年), LunarYearly (农历每年)" },
+            dueAt = new { type = "string", description = "提醒到期时间 (一次性提醒必需)，格式为 ISO 8601 (例: 2026-08-09T15:00:00)" },
+            month = new { type = "integer", description = "公历或农历月份 (1-12，每年提醒必需)" },
+            day = new { type = "integer", description = "公历或农历日期 (1-31，每年提醒必需)" },
+            time = new { type = "string", description = "每天提醒的具体时间 (例: 09:00)" },
             daysInAdvance = new { type = "integer", description = "提前几天提醒 (默认 1 天)" },
             notes = new { type = "string", description = "备注说明 (可选)" }
         },
@@ -34,18 +36,23 @@ public class ReminderCreateTool : IAiTool
             using var doc = JsonDocument.Parse(argumentsJson);
             var root = doc.RootElement;
             string title = root.TryGetProperty("title", out var t) ? t.GetString() ?? "待办事项" : "待办事项";
+            string scheduleType = root.TryGetProperty("scheduleType", out var st) ? st.GetString() ?? "OneTime" : "OneTime";
 
             string dueStr = "未指定";
-            if (root.TryGetProperty("dueAt", out var dueElem) && dueElem.ValueKind == JsonValueKind.String)
+            if (scheduleType == "OneTime")
             {
-                if (DateTime.TryParse(dueElem.GetString(), out var d))
+                if (root.TryGetProperty("dueAt", out var dueElem) && dueElem.ValueKind == JsonValueKind.String)
                 {
-                    dueStr = d.ToString("yyyy-MM-dd HH:mm");
+                    if (DateTime.TryParse(dueElem.GetString(), out var d))
+                    {
+                        dueStr = d.ToString("yyyy-MM-dd HH:mm");
+                    }
                 }
             }
             else if (root.TryGetProperty("month", out var m) && root.TryGetProperty("day", out var d))
             {
-                dueStr = $"{DateTime.Now.Year}-{m.GetInt32():D2}-{d.GetInt32():D2}";
+                string typeLabel = scheduleType == "LunarYearly" ? "每年农历" : "每年公历";
+                dueStr = $"{typeLabel} {m.GetInt32()}月{d.GetInt32()}日";
             }
 
             int advance = root.TryGetProperty("daysInAdvance", out var a) ? a.GetInt32() : 1;
@@ -66,18 +73,50 @@ public class ReminderCreateTool : IAiTool
             var root = doc.RootElement;
 
             string title = root.GetProperty("title").GetString() ?? "新提醒";
-
-            DateTime dueAt = DateTime.Now.Date.AddDays(1).AddHours(9);
-            if (root.TryGetProperty("dueAt", out var dueElem) && dueElem.ValueKind == JsonValueKind.String)
+            string scheduleTypeStr = root.TryGetProperty("scheduleType", out var stElem) ? stElem.GetString() ?? "OneTime" : "OneTime";
+            ReminderScheduleType scheduleType = scheduleTypeStr switch
             {
-                if (DateTime.TryParse(dueElem.GetString(), out var parsedDue))
+                "Yearly" => ReminderScheduleType.Yearly,
+                "LunarYearly" => ReminderScheduleType.LunarYearly,
+                _ => ReminderScheduleType.OneTime
+            };
+
+            DateTime? dueAt = null;
+            TimeSpan timeOfDay = new TimeSpan(9, 0, 0);
+            int month = DateTime.Now.Month;
+            int day = DateTime.Now.Day;
+
+            if (root.TryGetProperty("time", out var timeElem) && timeElem.ValueKind == JsonValueKind.String)
+            {
+                if (TimeSpan.TryParse(timeElem.GetString(), out var parsedTime))
                 {
-                    dueAt = parsedDue;
+                    timeOfDay = parsedTime;
                 }
             }
-            else if (root.TryGetProperty("month", out var mElem) && root.TryGetProperty("day", out var dElem))
+
+            if (scheduleType == ReminderScheduleType.OneTime)
             {
-                dueAt = new DateTime(DateTime.Now.Year, mElem.GetInt32(), dElem.GetInt32(), 9, 0, 0);
+                if (root.TryGetProperty("dueAt", out var dueElem) && dueElem.ValueKind == JsonValueKind.String)
+                {
+                    if (DateTime.TryParse(dueElem.GetString(), out var parsedDue))
+                    {
+                        dueAt = parsedDue;
+                        month = parsedDue.Month;
+                        day = parsedDue.Day;
+                        timeOfDay = parsedDue.TimeOfDay;
+                    }
+                }
+                else if (root.TryGetProperty("month", out var mElem) && root.TryGetProperty("day", out var dElem))
+                {
+                    month = mElem.GetInt32();
+                    day = dElem.GetInt32();
+                    dueAt = new DateTime(DateTime.Now.Year, month, day, timeOfDay.Hours, timeOfDay.Minutes, 0);
+                }
+            }
+            else
+            {
+                if (root.TryGetProperty("month", out var mElem)) month = mElem.GetInt32();
+                if (root.TryGetProperty("day", out var dElem)) day = dElem.GetInt32();
             }
 
             int advance = root.TryGetProperty("daysInAdvance", out var advElem) ? advElem.GetInt32() : 1;
@@ -87,20 +126,22 @@ public class ReminderCreateTool : IAiTool
             var newReminder = new Reminder
             {
                 Title = title,
-                Month = dueAt.Month,
-                Day = dueAt.Day,
+                Month = month,
+                Day = day,
                 DueAt = dueAt,
-                TimeOfDay = dueAt.TimeOfDay,
+                TimeOfDay = timeOfDay,
                 DaysInAdvance = advance,
                 Notes = notes,
-                ScheduleType = ReminderScheduleType.OneTime
+                ScheduleType = scheduleType,
+                IsLunar = scheduleType == ReminderScheduleType.LunarYearly
             };
             reminders.Add(newReminder);
             DataService.SaveReminders(reminders);
 
+            string dateInfo = dueAt.HasValue ? dueAt.Value.ToString("yyyy-MM-dd HH:mm") : $"{month}月{day}日";
             return Task.FromResult(new AiToolResult
             {
-                OutputJson = JsonSerializer.Serialize(new { success = true, message = $"已成功为您创建提醒：{title} ({dueAt:yyyy-MM-dd HH:mm})" })
+                OutputJson = JsonSerializer.Serialize(new { success = true, message = $"已成功为您创建提醒：{title} ({dateInfo})" })
             });
         }
         catch (Exception ex)

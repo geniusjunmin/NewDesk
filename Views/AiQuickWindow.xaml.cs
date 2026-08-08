@@ -92,7 +92,8 @@ public partial class AiQuickWindow : Window
                 PreferredProvider = defaultProvider,
                 TaskProfile = AiTaskProfile.FastCommand,
                 DataSensitivity = DataSensitivity.Personal,
-                DataCategories = AiDataCategory.UserPrompt | AiDataCategory.Reminder | AiDataCategory.Wallpaper,
+                DataCategories = AiDataCategory.UserPrompt,
+                RequestedContextCategories = AiDataCategory.Reminder | AiDataCategory.Wallpaper,
                 CloudConsentCallback = preview => CloudConsentService.ShowInteractiveConsentAsync(this, preview),
                 ConfirmationCallback = async pending =>
                 {
@@ -101,7 +102,12 @@ public partial class AiQuickWindow : Window
                         Owner = this
                     };
                     return dlg.ShowDialog() == true;
-                }
+                },
+                ToolExecutionProgress = new Progress<ToolExecutionDisplayInfo>(info =>
+                {
+                    if (ResultTextBlock.Text.StartsWith("⟳")) ResultTextBlock.Text = "";
+                    ResultTextBlock.Text += $"\n[{info.Icon} {info.Title}: {info.Detail}]\n";
+                })
             };
 
             var progress = new Progress<AiStreamChunk>(chunk =>

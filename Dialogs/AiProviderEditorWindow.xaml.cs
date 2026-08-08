@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using NewDesk.Models.Ai;
+using NewDesk.Models.Security;
 using NewDesk.Services.Ai;
 using NewDesk.Services.Security;
 
@@ -79,6 +80,21 @@ public partial class AiProviderEditorWindow : Window
         }
     }
 
+    private void ValidateConfigBeforeAction(AiProviderConfig config, string apiKey, bool isSaving = false)
+    {
+        if (string.IsNullOrWhiteSpace(config.Name))
+        {
+            throw new InvalidOperationException("服务提供商名称不能为空。");
+        }
+
+        EndpointSecurityPolicy.ValidateEndpoint(config.BaseUrl, !string.IsNullOrEmpty(apiKey));
+
+        if (isSaving && string.IsNullOrWhiteSpace(config.SelectedModel))
+        {
+            throw new InvalidOperationException("保存配置时模型 ID 不能为空，请选择或手动输入模型 ID。");
+        }
+    }
+
     private async void TestConnectionButton_Click(object sender, RoutedEventArgs e)
     {
         TestConnectionButton.IsEnabled = false;
@@ -87,9 +103,25 @@ public partial class AiProviderEditorWindow : Window
 
         SyncConfigFromUI();
 
+        string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
+
+        try
+        {
+            ValidateConfigBeforeAction(_config, key, isSaving: false);
+        }
+        catch (Exception ex)
+        {
+            TestResultBorder.Visibility = Visibility.Visible;
+            TestResultTitle.Text = "❌ 配置验证失败";
+            TestResultTitle.Foreground = (System.Windows.Media.Brush)FindResource("DangerBrush");
+            TestResultDetail.Text = ex.Message;
+            TestConnectionButton.IsEnabled = true;
+            TestConnectionButton.Content = "⚡ 测试连接";
+            return;
+        }
+
         var testConfig = _config.Clone();
         var tempSecretId = "temp_test_" + Guid.NewGuid().ToString("N");
-        string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
 
         if (!string.IsNullOrEmpty(key))
         {
@@ -139,9 +171,22 @@ public partial class AiProviderEditorWindow : Window
 
         SyncConfigFromUI();
 
+        string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
+
+        try
+        {
+            ValidateConfigBeforeAction(_config, key, isSaving: false);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"配置验证失败: {ex.Message}", "获取模型失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            FetchModelsButton.IsEnabled = true;
+            FetchModelsButton.Content = "⟳ 自动获取模型";
+            return;
+        }
+
         var testConfig = _config.Clone();
         var tempSecretId = "temp_fetch_" + Guid.NewGuid().ToString("N");
-        string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
 
         if (!string.IsNullOrEmpty(key))
         {
@@ -164,10 +209,14 @@ public partial class AiProviderEditorWindow : Window
             {
                 ModelComboBox.SelectedIndex = 0;
             }
+            else
+            {
+                MessageBox.Show("无法自动获取模型列表，请手动输入 Model ID。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"获取模型列表失败: {ex.Message}", "获取模型失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show($"无法自动获取模型列表: {ex.Message}，请手动输入 Model ID。", "获取模型提示", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {
@@ -196,6 +245,17 @@ public partial class AiProviderEditorWindow : Window
         SyncConfigFromUI();
 
         string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
+
+        try
+        {
+            ValidateConfigBeforeAction(_config, key, isSaving: true);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "保存失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         if (string.IsNullOrEmpty(_config.SecretId))
         {
             _config.SecretId = "secret_" + Guid.NewGuid().ToString("N");

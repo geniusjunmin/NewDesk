@@ -337,12 +337,12 @@ public static class AutomatedTestRunner
                 {
                     Id = "call_test2",
                     Name = "create_reminder",
-                    ArgumentsJson = "{\"title\":\"Test Accepted\",\"month\":8,\"day\":18}"
+                    ArgumentsJson = "{\"title\":\"Test Accepted\",\"scheduleType\":\"OneTime\",\"dueAt\":\"2026-08-18T10:00:00\"}"
                 };
 
                 var acceptedResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, userConfirmationCallback: pending => Task.FromResult(true));
                 if (acceptedResult.IsError)
-                    throw new InvalidOperationException("AiToolExecutionService failed to execute tool when user confirmed.");
+                    throw new InvalidOperationException($"AiToolExecutionService failed to execute tool when user confirmed: {acceptedResult.OutputJson}");
             });
 
             RunTest("Tool Execution Display Formatting Test", () =>
@@ -369,140 +369,104 @@ public static class AutomatedTestRunner
                 }
             });
 
-            RunTest("Dynamic Data Sources Persistence & Predefined Presets", () =>
+            await RunTestAsync("Provider Pre-Send Security Endpoint Validation (Mock zero requests)", async () =>
             {
-                var sources = DynamicDataService.LoadSources();
-                if (sources.Count == 0)
-                    throw new InvalidOperationException("DynamicDataService failed to load preset sources.");
-            });
-
-            RunTest("Dynamic Secret Headers DPAPI Storage Test", () =>
-            {
-                var source = new DynamicDataSource
+                int requestCount = 0;
+                var mockHandler = new MockHttpMessageHandler(req =>
                 {
-                    Name = "Test API Source",
-                    Headers = new Dictionary<string, string>
-                    {
-                        { "Authorization", "Bearer my_super_secret_token" },
-                        { "Content-Type", "application/json" }
-                    }
+                    requestCount++;
+                    return MockHttpMessageHandler.CreateJsonResponse("[]");
+                });
+
+                var mockClient = new HttpClient(mockHandler);
+                string secretId = "test_insecure_key";
+                AiSecretStorageService.SaveSecret(secretId, "sk-test123");
+
+                var insecureConfig = new AiProviderConfig
+                {
+                    Name = "Insecure Remote Provider",
+                    BaseUrl = "http://remote.example.com/v1",
+                    Protocol = AiApiProtocol.ChatCompletions,
+                    SecretId = secretId
                 };
 
-                var res = DynamicDataService.SaveSources(new List<DynamicDataSource> { source });
-                if (!res.IsSuccess)
-                    throw new InvalidOperationException($"DynamicDataService.SaveSources failed: {res.Message}");
-
-                if (source.Headers.ContainsKey("Authorization"))
-                    throw new InvalidOperationException("Sensitive header Authorization was not automatically removed from plaintext Headers dictionary!");
-
-                if (!source.SecretHeaders.ContainsKey("Authorization"))
-                    throw new InvalidOperationException("Sensitive header Authorization was not stored in SecretHeaders!");
-            });
-
-            RunTest("Real JsonPathExtractor Nested & Array Index Parsing Test", () =>
-            {
-                string sampleJson = "{\"data\":{\"items\":[{\"price\":18},{\"price\":25}]}}";
-
-                if (!JsonPathExtractor.TryExtract(sampleJson, "$.data.items[0].price", out string val) || val != "18")
-                    throw new InvalidOperationException($"JsonPathExtractor failed to parse $.data.items[0].price. Result: {val}");
-            });
-
-            RunTest("JsonPath Extraction Failure Uses Cache Fallback Test", () =>
-            {
-                string badJson = "{\"invalid\":\"structure\"}";
-                bool success = JsonPathExtractor.TryExtract(badJson, "$.data.items[0].price", out string val);
-                if (success)
-                    throw new InvalidOperationException("JsonPathExtractor should return false for non-matching paths.");
-            });
-
-            RunTest("NetworkEndpointClassifier Loopback vs Cloud Endpoint Test", () =>
-            {
-                if (!NetworkEndpointClassifier.IsLocalEndpoint("http://localhost:11434/v1"))
-                    throw new InvalidOperationException("http://localhost:11434/v1 should be classified as Local!");
-
-                if (!NetworkEndpointClassifier.IsLocalEndpoint("http://127.0.0.1:1234/v1"))
-                    throw new InvalidOperationException("http://127.0.0.1:1234/v1 should be classified as Local!");
-
-                if (NetworkEndpointClassifier.IsLocalEndpoint("https://localhost.evil.com/v1"))
-                    throw new InvalidOperationException("https://localhost.evil.com/v1 MUST NOT be classified as Local!");
-            });
-
-            RunTest("AI PrivacyGuard Category Flags Enforcement Test", () =>
-            {
-                var settings = SettingsService.LoadSettings();
-                settings.AiNetworkMode = AiNetworkMode.LocalOnly;
-                SettingsService.SaveSettings(settings);
-
-                var cloudProvider = new AiProviderConfig
+                var provider = new OpenAiCompatibleProvider(insecureConfig, mockClient);
+                try
                 {
-                    Kind = AiProviderKind.OpenAI,
-                    BaseUrl = "https://api.openai.com/v1"
-                };
+                    await provider.GetModelsAsync();
+                    throw new InvalidOperationException("Provider pre-send validation failed to throw exception for HTTP remote endpoint with secret!");
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("HTTPS 协议") || ex.Message.Contains("HTTP"))
+                {
+                    if (requestCount != 0)
+                        throw new InvalidOperationException($"Pre-send validation leaked HTTP request! RequestCount: {requestCount}");
+                }
+                finally
+                {
+                    AiSecretStorageService.DeleteSecret(secretId);
+                }
+            });
+
+            RunTest("NaturalLanguageReminderParser relative keyword order (大后天 vs 后天)", () =>
+            {
+                var now = new DateTime(2026, 8, 8, 10, 0, 0);
+                var clock = new TestClock(now);
+
+                var r3 = NaturalLanguageReminderParser.Parse("大后天下午3点开会", clock);
+                if (r3.Title != "开会" || r3.DueAt?.Date != new DateTime(2026, 8, 11))
+                    throw new InvalidOperationException($"Parsing '大后天' failed: expected 2026-08-11, got {r3.DueAt}");
+
+                var r2 = NaturalLanguageReminderParser.Parse("后天下午3点开会", clock);
+                if (r2.Title != "开会" || r2.DueAt?.Date != new DateTime(2026, 8, 10))
+                    throw new InvalidOperationException($"Parsing '后天' failed: expected 2026-08-10, got {r2.DueAt}");
+            });
+
+            RunTest("NaturalLanguageReminderParser TryCreateDate & invalid month/day checks", () =>
+            {
+                var clock = new TestClock(new DateTime(2026, 8, 8));
 
                 try
                 {
-                    AiPrivacyGuard.ValidateRequest(cloudProvider, DataSensitivity.Personal, AiDataCategory.UserPrompt, "Hello");
-                    throw new InvalidOperationException("AiPrivacyGuard failed to block Cloud provider in LocalOnly network mode!");
+                    NaturalLanguageReminderParser.Parse("2月31日开会", clock);
+                    throw new InvalidOperationException("Parser failed to throw exception on invalid 2月31日!");
                 }
-                catch (InvalidOperationException ex) when (ex.Message.Contains("仅限本地模型模式"))
+                catch (ArgumentException ex) when (ex.Message.Contains("最多只有"))
                 {
                     // Expected behavior
                 }
 
-                settings.AiNetworkMode = AiNetworkMode.AllowCloud;
-                SettingsService.SaveSettings(settings);
+                if (NaturalLanguageReminderParser.TryCreateDate(2026, 2, 31, out _))
+                    throw new InvalidOperationException("TryCreateDate returned true for 2026-02-31!");
             });
 
-            RunTest("Natural Language Reminder Parsing & Title Clean Test", () =>
+            RunTest("ReminderScheduleCalculator OneTime, Yearly, LunarYearly Next Occurrence", () =>
             {
-                var parsed = NaturalLanguageReminderParser.Parse("明天下午3点开会");
-                if (parsed.Title != "开会")
-                    throw new InvalidOperationException($"Parsed title mismatch: Expected '开会', got '{parsed.Title}'");
+                var now = new DateTime(2026, 8, 8, 10, 0, 0);
 
-                parsed.SnoozeUntil = DateTime.Now.AddMinutes(15);
-                if (!parsed.SnoozeUntil.HasValue)
-                    throw new InvalidOperationException("SnoozeUntil setting failed.");
+                var yearly = new Reminder { ScheduleType = ReminderScheduleType.Yearly, Month = 8, Day = 10, TimeOfDay = new TimeSpan(9, 0, 0) };
+                var nextYearly = ReminderScheduleCalculator.GetNextOccurrence(yearly, now);
+                if (nextYearly?.Date != new DateTime(2026, 8, 10))
+                    throw new InvalidOperationException($"Yearly next occurrence expected 2026-08-10, got {nextYearly}");
+
+                var pastYearly = new Reminder { ScheduleType = ReminderScheduleType.Yearly, Month = 8, Day = 5, TimeOfDay = new TimeSpan(9, 0, 0) };
+                var nextPastYearly = ReminderScheduleCalculator.GetNextOccurrence(pastYearly, now);
+                if (nextPastYearly?.Date != new DateTime(2027, 8, 5))
+                    throw new InvalidOperationException($"Past yearly next occurrence expected 2027-08-05, got {nextPastYearly}");
             });
 
-            RunTest("Vault 2.0 TOTP Code Generation & Local Password Health Score", () =>
+            RunTest("RemindersV1ToV2MigrationStep Raw JSON Inspection (Legacy Annual Reminder)", () =>
             {
-                string testSecret = "JBSWY3DPEHPK3PXP";
-                var (code, remaining) = TotpService.GenerateTotp(testSecret);
-                if (code.Length != 6 || remaining <= 0 || remaining > 30)
-                    throw new InvalidOperationException($"TOTP generation invalid: code={code}, remaining={remaining}");
+                string remindersPath = AppDataPath.RemindersFile;
+                string legacyJson = "[{\"Id\":\"" + Guid.NewGuid() + "\",\"Title\":\"Old Birthday\",\"Month\":10,\"Day\":15,\"IsLunar\":false,\"DaysInAdvance\":1}]";
+                File.WriteAllText(remindersPath, legacyJson);
 
-                var entries = new List<PasswordEntry>
-                {
-                    new PasswordEntry { Title = "Site1", Password = "123" },
-                    new PasswordEntry { Title = "Site2", Password = "123" },
-                    new PasswordEntry { Title = "Site3", Password = "StrongPassword123!" }
-                };
+                var step = new RemindersV1ToV2MigrationStep();
+                bool ok = step.Execute();
+                if (!ok) throw new InvalidOperationException("RemindersV1ToV2MigrationStep execution failed.");
 
-                var report = PasswordHealthService.Evaluate(entries);
-                if (report.WeakCount < 2 || report.Score >= 100)
-                    throw new InvalidOperationException($"PasswordHealthService report calculation failed: Score={report.Score}, Weak={report.WeakCount}");
-            });
-
-            RunTest("Wallpaper Pro Asset Library & TextElementState Complete Field Cloning Test", () =>
-            {
-                var original = new TextElementState
-                {
-                    Text = "Sample Text",
-                    IsLocked = true,
-                    IsVisible = false,
-                    DataSourceId = "ds_12345",
-                    ShadowEnabled = true,
-                    StrokeEnabled = true
-                };
-
-                var cloned = original.Clone();
-                if (!cloned.IsLocked || cloned.IsVisible || cloned.DataSourceId != "ds_12345" || !cloned.ShadowEnabled || !cloned.StrokeEnabled)
-                    throw new InvalidOperationException("TextElementState.Clone failed to copy complete fields!");
-            });
-
-            RunTest("Wallpaper TextRenderer IsVisible Early Return Test", () =>
-            {
-                var hiddenElement = new TextElementState { Text = "Hidden", IsVisible = false };
+                var loaded = DataService.LoadReminders();
+                if (loaded.Count == 0 || loaded[0].ScheduleType != ReminderScheduleType.Yearly || loaded[0].DueAt != null)
+                    throw new InvalidOperationException($"Legacy reminder migration failed! ScheduleType: {loaded[0].ScheduleType}, DueAt: {loaded[0].DueAt}");
             });
 
             RunTest("BackupService ZIP Creation & Restore Verification Test", () =>

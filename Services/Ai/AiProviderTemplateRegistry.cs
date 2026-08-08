@@ -16,7 +16,7 @@ public static class AiProviderTemplateRegistry
                 Name = "OpenAI",
                 BaseUrl = "https://api.openai.com/v1",
                 Protocol = AiApiProtocol.Responses,
-                SelectedModel = "gpt-4o",
+                SelectedModel = "",
                 IsDefault = false,
                 IsEnabled = false
             },
@@ -27,7 +27,7 @@ public static class AiProviderTemplateRegistry
                 Name = "Google Gemini",
                 BaseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/",
                 Protocol = AiApiProtocol.ChatCompletions,
-                SelectedModel = "gemini-2.0-flash",
+                SelectedModel = "",
                 IsDefault = false,
                 IsEnabled = false
             },
@@ -38,7 +38,7 @@ public static class AiProviderTemplateRegistry
                 Name = "xAI (Grok)",
                 BaseUrl = "https://api.x.ai/v1",
                 Protocol = AiApiProtocol.Responses,
-                SelectedModel = "grok-2-latest",
+                SelectedModel = "",
                 IsDefault = false,
                 IsEnabled = false
             },
@@ -49,7 +49,7 @@ public static class AiProviderTemplateRegistry
                 Name = "MiniMax",
                 BaseUrl = "https://api.minimax.io/v1",
                 Protocol = AiApiProtocol.ChatCompletions,
-                SelectedModel = "abab6.5s-chat",
+                SelectedModel = "",
                 IsDefault = false,
                 IsEnabled = false
             },
@@ -60,7 +60,7 @@ public static class AiProviderTemplateRegistry
                 Name = "DeepSeek",
                 BaseUrl = "https://api.deepseek.com",
                 Protocol = AiApiProtocol.ChatCompletions,
-                SelectedModel = "deepseek-chat",
+                SelectedModel = "",
                 IsDefault = false,
                 IsEnabled = false
             },
@@ -71,7 +71,7 @@ public static class AiProviderTemplateRegistry
                 Name = "Anthropic Claude",
                 BaseUrl = "https://api.anthropic.com/v1",
                 Protocol = AiApiProtocol.AnthropicMessages,
-                SelectedModel = "claude-3-5-sonnet-20241022",
+                SelectedModel = "",
                 IsDefault = false,
                 IsEnabled = false
             },
@@ -82,7 +82,7 @@ public static class AiProviderTemplateRegistry
                 Name = "Ollama (Local)",
                 BaseUrl = "http://localhost:11434/v1",
                 Protocol = AiApiProtocol.ChatCompletions,
-                SelectedModel = "llama3:latest",
+                SelectedModel = "",
                 IsDefault = false,
                 IsEnabled = true
             },
@@ -93,7 +93,7 @@ public static class AiProviderTemplateRegistry
                 Name = "LM Studio (Local)",
                 BaseUrl = "http://localhost:1234/v1",
                 Protocol = AiApiProtocol.Auto,
-                SelectedModel = "local-model",
+                SelectedModel = "",
                 IsDefault = false,
                 IsEnabled = true
             }

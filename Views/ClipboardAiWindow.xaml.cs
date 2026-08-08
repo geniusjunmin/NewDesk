@@ -81,11 +81,9 @@ public partial class ClipboardAiWindow : Window
                     UserPrompt = prompt,
                     TaskProfile = AiTaskProfile.FastCommand,
                     DataSensitivity = DataSensitivity.Sensitive,
-                    CloudConsentCallback = async preview =>
-                    {
-                        var dlg = new CloudAiConsentDialog(preview) { Owner = this };
-                        return dlg.ShowDialog() == true && dlg.IsAllowed;
-                    }
+                    DataCategories = AiDataCategory.UserPrompt | AiDataCategory.Clipboard,
+                    RequestedContextCategories = AiDataCategory.None,
+                    CloudConsentCallback = preview => CloudConsentService.ShowInteractiveConsentAsync(this, preview)
                 };
 
                 var progress = new Progress<AiStreamChunk>(chunk =>

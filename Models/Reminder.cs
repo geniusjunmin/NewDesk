@@ -36,6 +36,10 @@ public class Reminder : INotifyPropertyChanged
     private DateTime? _advanceNotifiedAt;
     private DateTime? _dueNotifiedAt;
 
+    // Occurrence Tracking for Yearly / LunarYearly Reminders
+    private DateTime? _lastAdvanceOccurrence;
+    private DateTime? _lastDueOccurrence;
+
     public Guid Id { get => _id; set => SetField(ref _id, value); }
     public string Title { get => _title; set => SetField(ref _title, value); }
     public bool IsLunar { get => _isLunar; set => SetField(ref _isLunar, value); }
@@ -55,6 +59,9 @@ public class Reminder : INotifyPropertyChanged
     public ReminderScheduleType ScheduleType { get => _scheduleType; set => SetField(ref _scheduleType, value); }
     public DateTime? AdvanceNotifiedAt { get => _advanceNotifiedAt; set => SetField(ref _advanceNotifiedAt, value); }
     public DateTime? DueNotifiedAt { get => _dueNotifiedAt; set => SetField(ref _dueNotifiedAt, value); }
+
+    public DateTime? LastAdvanceOccurrence { get => _lastAdvanceOccurrence; set => SetField(ref _lastAdvanceOccurrence, value); }
+    public DateTime? LastDueOccurrence { get => _lastDueOccurrence; set => SetField(ref _lastDueOccurrence, value); }
 
     public string ReminderType => IsLunar ? "农历" : "公历";
     public DateTime NextReminderDate { get; set; }

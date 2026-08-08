@@ -23,38 +23,46 @@ public static class NaturalLanguageReminderParser
         bool isLunar = text.Contains("农历") || text.Contains("阴历");
         string title = text;
 
-        // 1. Check for "今天" / "明天" / "后天" / "大后天"
-        if (Regex.IsMatch(title, @"今天"))
+        // 1. Check relative date keywords (Must check "大后天" BEFORE "后天")
+        if (Regex.IsMatch(title, @"大后天"))
         {
-            targetDate = now.Date;
-            title = Regex.Replace(title, @"今天", "").Trim();
-        }
-        else if (Regex.IsMatch(title, @"明天"))
-        {
-            targetDate = now.Date.AddDays(1);
-            title = Regex.Replace(title, @"明天", "").Trim();
+            targetDate = now.Date.AddDays(3);
+            title = Regex.Replace(title, @"大后天", "").Trim();
         }
         else if (Regex.IsMatch(title, @"后天"))
         {
             targetDate = now.Date.AddDays(2);
             title = Regex.Replace(title, @"后天", "").Trim();
         }
-        else if (Regex.IsMatch(title, @"大后天"))
+        else if (Regex.IsMatch(title, @"明天"))
         {
-            targetDate = now.Date.AddDays(3);
-            title = Regex.Replace(title, @"大后天", "").Trim();
+            targetDate = now.Date.AddDays(1);
+            title = Regex.Replace(title, @"明天", "").Trim();
+        }
+        else if (Regex.IsMatch(title, @"今天"))
+        {
+            targetDate = now.Date;
+            title = Regex.Replace(title, @"今天", "").Trim();
         }
 
-        // 2. Check for "M月D日" or "M-D"
+        // 2. Check for "M月D日"
         var monthDayMatch = Regex.Match(title, @"(\d{1,2})\s*月\s*(\d{1,2})\s*日?");
         if (monthDayMatch.Success && int.TryParse(monthDayMatch.Groups[1].Value, out int m) && int.TryParse(monthDayMatch.Groups[2].Value, out int d))
         {
-            if (m >= 1 && m <= 12 && d >= 1 && d <= 31)
+            if (m < 1 || m > 12)
             {
-                targetDate = new DateTime(now.Year, m, d);
-                if (targetDate < now.Date) targetDate = targetDate.AddYears(1);
-                title = Regex.Replace(title, @"\d{1,2}\s*月\s*\d{1,2}\s*日?", "").Trim();
+                throw new ArgumentException($"无效的提醒月份 '{m}'，月份必须介于 1 到 12 之间。");
             }
+
+            int maxDays = DateTime.DaysInMonth(now.Year, m);
+            if (d < 1 || d > maxDays)
+            {
+                throw new ArgumentException($"无效的提醒日期 '{m}月{d}日'，该月份最多只有 {maxDays} 天。");
+            }
+
+            targetDate = new DateTime(now.Year, m, d);
+            if (targetDate < now.Date) targetDate = targetDate.AddYears(1);
+            title = Regex.Replace(title, @"\d{1,2}\s*月\s*\d{1,2}\s*日?", "").Trim();
         }
 
         // 3. Check for Time of Day ("下午3点", "下午15:30", "上午9点", "15:00", "8:30")
@@ -105,5 +113,15 @@ public static class NaturalLanguageReminderParser
             DaysInAdvance = 1,
             Category = "工作"
         };
+    }
+
+    public static bool TryCreateDate(int year, int month, int day, out DateTime date)
+    {
+        date = default;
+        if (month < 1 || month > 12) return false;
+        int maxDays = DateTime.DaysInMonth(year, month);
+        if (day < 1 || day > maxDays) return false;
+        date = new DateTime(year, month, day);
+        return true;
     }
 }

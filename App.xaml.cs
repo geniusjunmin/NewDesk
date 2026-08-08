@@ -32,7 +32,13 @@ public partial class App : System.Windows.Application
 
         // Initialize AppData and run versioned migrations on startup
         AppDataPath.Initialize();
-        MigrationService.RunAllMigrationsIfNeeded();
+        var migrationResult = MigrationService.RunAllMigrationsIfNeeded();
+        if (!migrationResult.Success)
+        {
+            string failed = string.Join(", ", migrationResult.FailedDomains);
+            AppDataPath.LogError("App.OnStartup Migration Warning", new Exception($"Domains failed migration: {failed}"));
+            ToastManager.Show("数据迁移警告", $"部分数据模块 ({failed}) 升级可能未完成，旧版本数据已安全备份。", ToastType.Warning);
+        }
 
         // Ensure icon exists
         IconService.EnsureIconExists();

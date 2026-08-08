@@ -33,14 +33,21 @@ public class AnthropicMessagesProvider : IAiProvider
         Capabilities = new AiProviderCapabilities
         {
             SupportsStreaming = config.Streaming,
-            SupportsVision = true,
-            SupportsTools = true,
-            SupportsStructuredOutput = true,
+            SupportsVision = config.SupportsVisionOverride ?? true,
+            SupportsTools = config.SupportsToolsOverride ?? true,
+            SupportsStructuredOutput = config.SupportsStructuredOutputOverride ?? true,
             SupportsReasoning = true,
             SupportsResponsesApi = false,
             SupportsModelListing = true,
             IsLocal = isLocal
         };
+    }
+
+    private void ValidateEndpointBeforeSend()
+    {
+        string? secret = SecretStorageService.GetSecret(Config.SecretId);
+        bool transmitsSecrets = !string.IsNullOrEmpty(secret);
+        AiHttpSecurityGuard.ValidateRequest(Config.BaseUrl, transmitsSecrets);
     }
 
     private void ApplyHeaders(HttpRequestMessage request)
@@ -83,6 +90,8 @@ public class AnthropicMessagesProvider : IAiProvider
 
     public async Task<IReadOnlyList<AiModelInfo>> GetModelsAsync(CancellationToken cancellationToken = default)
     {
+        ValidateEndpointBeforeSend();
+
         try
         {
             string url = Config.BaseUrl.TrimEnd('/') + "/models";
@@ -109,21 +118,19 @@ public class AnthropicMessagesProvider : IAiProvider
                 }
             }
 
-            if (list.Count > 0) return list;
+            return list;
         }
-        catch { }
-
-        // Fallback static list
-        return new List<AiModelInfo>
+        catch
         {
-            new AiModelInfo { Id = "claude-3-5-sonnet-20241022", Name = "Claude 3.5 Sonnet", OwnedBy = "Anthropic" },
-            new AiModelInfo { Id = "claude-3-5-haiku-20241022", Name = "Claude 3.5 Haiku", OwnedBy = "Anthropic" },
-            new AiModelInfo { Id = "claude-3-opus-20240229", Name = "Claude 3 Opus", OwnedBy = "Anthropic" }
-        };
+            // Step 10 Directive: Return empty list if /models endpoint fails, do NOT fake static models
+            return new List<AiModelInfo>();
+        }
     }
 
     public async Task<AiResponse> CompleteAsync(AiRequest request, CancellationToken cancellationToken = default)
     {
+        ValidateEndpointBeforeSend();
+
         string url = Config.BaseUrl.TrimEnd('/') + "/messages";
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         ApplyHeaders(req);
@@ -178,6 +185,8 @@ public class AnthropicMessagesProvider : IAiProvider
 
     public async IAsyncEnumerable<AiStreamChunk> StreamAsync(AiRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        ValidateEndpointBeforeSend();
+
         string url = Config.BaseUrl.TrimEnd('/') + "/messages";
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         ApplyHeaders(req);

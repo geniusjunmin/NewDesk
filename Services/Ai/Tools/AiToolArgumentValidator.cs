@@ -17,8 +17,14 @@ public static class AiToolArgumentValidator
 {
     public static ToolValidationResult ValidateArguments(string toolName, string argumentsJson)
     {
-        if (string.IsNullOrWhiteSpace(argumentsJson))
-            return ToolValidationResult.Success(); // Empty parameters allowed
+        if (string.IsNullOrWhiteSpace(argumentsJson) || argumentsJson.Trim() == "{}")
+        {
+            if (toolName == "switch_wallpaper")
+            {
+                return ToolValidationResult.Success();
+            }
+            return ToolValidationResult.Fail($"工具 '{toolName}' 要求必需的参数，参数不能为空。");
+        }
 
         try
         {
@@ -49,27 +55,52 @@ public static class AiToolArgumentValidator
         if (string.IsNullOrWhiteSpace(title))
             return ToolValidationResult.Fail("提醒标题 (title) 不能为空。");
 
-        if (root.TryGetProperty("dueAt", out var dueElem) && dueElem.ValueKind == JsonValueKind.String)
+        string scheduleType = root.TryGetProperty("scheduleType", out var st) ? st.GetString() ?? "OneTime" : "OneTime";
+
+        if (scheduleType == "OneTime")
         {
-            string dueStr = dueElem.GetString() ?? "";
-            if (!string.IsNullOrEmpty(dueStr) && !DateTime.TryParse(dueStr, out _))
+            if (!root.TryGetProperty("dueAt", out var dueElem) || dueElem.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(dueElem.GetString()))
             {
-                return ToolValidationResult.Fail($"提醒时间 (dueAt) '{dueStr}' 不是有效的 ISO 8601 日期格式。");
+                // Fallback check if month and day are supplied
+                if (!root.TryGetProperty("month", out _) || !root.TryGetProperty("day", out _))
+                {
+                    return ToolValidationResult.Fail("一次性提醒 (OneTime) 必须指定到期时间 (dueAt)。");
+                }
+            }
+
+            if (root.TryGetProperty("dueAt", out var dueVal) && dueVal.ValueKind == JsonValueKind.String)
+            {
+                string dueStr = dueVal.GetString() ?? "";
+                if (!string.IsNullOrEmpty(dueStr) && !DateTime.TryParse(dueStr, out _))
+                {
+                    return ToolValidationResult.Fail($"到期时间 (dueAt) '{dueStr}' 不是有效的日期格式。");
+                }
             }
         }
-
-        if (root.TryGetProperty("month", out var mElem) && mElem.ValueKind == JsonValueKind.Number)
+        else if (scheduleType == "Yearly" || scheduleType == "LunarYearly")
         {
+            if (!root.TryGetProperty("month", out var mElem) || mElem.ValueKind != JsonValueKind.Number)
+            {
+                return ToolValidationResult.Fail("每年提醒 (Yearly / LunarYearly) 必须指定月份 (month)。");
+            }
+            if (!root.TryGetProperty("day", out var dElem) || dElem.ValueKind != JsonValueKind.Number)
+            {
+                return ToolValidationResult.Fail("每年提醒 (Yearly / LunarYearly) 必须指定日期 (day)。");
+            }
+
             int month = mElem.GetInt32();
-            if (month < 1 || month > 12)
-                return ToolValidationResult.Fail($"提醒月份 (month) '{month}' 超出 1-12 范围。");
-        }
-
-        if (root.TryGetProperty("day", out var dElem) && dElem.ValueKind == JsonValueKind.Number)
-        {
             int day = dElem.GetInt32();
-            if (day < 1 || day > 31)
-                return ToolValidationResult.Fail($"提醒日期 (day) '{day}' 超出 1-31 范围。");
+
+            if (month < 1 || month > 12)
+            {
+                return ToolValidationResult.Fail($"提醒月份 (month) '{month}' 超出 1-12 范围。");
+            }
+
+            int maxDaysInMonth = DateTime.DaysInMonth(2024, month); // Leap year reference
+            if (day < 1 || day > maxDaysInMonth)
+            {
+                return ToolValidationResult.Fail($"提醒日期 (day) '{day}' 对于 {month} 月无效 (最大 {maxDaysInMonth} 天)。");
+            }
         }
 
         if (root.TryGetProperty("daysInAdvance", out var advElem) && advElem.ValueKind == JsonValueKind.Number)
@@ -84,7 +115,6 @@ public static class AiToolArgumentValidator
 
     private static ToolValidationResult ValidateWallpaperArguments(JsonElement root)
     {
-        // Parameter name is optional for switch_wallpaper ({} is valid)
         if (root.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String)
         {
             string name = n.GetString() ?? "";

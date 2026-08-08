@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -17,14 +18,26 @@ public class BackupFileEntry
 
 public class BackupManifest
 {
-    public string BackupVersion { get; set; } = "2.2.1";
-    public string AppVersion { get; set; } = "2.2.1";
+    public string BackupVersion { get; set; } = "2.2.3";
+    public string AppVersion { get; set; } = "2.2.3";
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public List<BackupFileEntry> Files { get; set; } = new();
 }
 
 public static class BackupService
 {
+    private static readonly HashSet<string> WhitelistedDataFiles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "app_settings.json",
+        "passwords.json",
+        "reminders.json",
+        "wallpapers.json",
+        "dynamic_sources.json",
+        "ai_providers.json",
+        "ai_conversations.json",
+        "migration_state.json"
+    };
+
     public static void CreateBackup(string targetZipPath)
     {
         string stagingDir = Path.Combine(Path.GetTempPath(), $"NewDeskBackupStaging_{Guid.NewGuid():N}");
@@ -51,7 +64,8 @@ public static class BackupService
                 AppDataPath.RemindersFile,
                 AppDataPath.WallpapersFile,
                 AppDataPath.DynamicDataFile,
-                AppDataPath.AiProvidersFile
+                AppDataPath.AiProvidersFile,
+                AppDataPath.AiConversationsFile
             };
 
             foreach (var filePath in filesToBackup)
@@ -59,6 +73,8 @@ public static class BackupService
                 if (File.Exists(filePath))
                 {
                     string fileName = Path.GetFileName(filePath);
+                    if (!WhitelistedDataFiles.Contains(fileName)) continue;
+
                     string destPath = Path.Combine(dataDir, fileName);
                     File.Copy(filePath, destPath, true);
 
@@ -79,6 +95,8 @@ public static class BackupService
                 foreach (var assetFile in Directory.GetFiles(localAssetsFolder))
                 {
                     string assetName = Path.GetFileName(assetFile);
+                    if (assetName.Contains("..") || assetName.Contains('/') || assetName.Contains('\\')) continue;
+
                     string destAsset = Path.Combine(assetsDir, assetName);
                     File.Copy(assetFile, destAsset, true);
 
@@ -116,7 +134,7 @@ public static class BackupService
     {
         if (!File.Exists(sourceZipPath)) return false;
 
-        // 1. Inspect ZIP entries for path traversal before extracting
+        // 1. Inspect ZIP entries for path traversal and strict file whitelist
         using (var archive = ZipFile.OpenRead(sourceZipPath))
         {
             foreach (var entry in archive.Entries)
@@ -124,7 +142,16 @@ public static class BackupService
                 string name = entry.FullName;
                 if (name.Contains("..") || name.StartsWith("/") || name.StartsWith("\\") || name.Contains(":"))
                 {
-                    throw new InvalidOperationException($"备份包包含非法路径与目录遍历风险 ({name})。解压已被阻止。");
+                    throw new InvalidDataException($"备份包包含非法路径与目录遍历风险 ({name})。解压已被阻止。");
+                }
+
+                if (name.StartsWith("data/", StringComparison.OrdinalIgnoreCase))
+                {
+                    string dataFileName = Path.GetFileName(name);
+                    if (!string.IsNullOrEmpty(dataFileName) && !WhitelistedDataFiles.Contains(dataFileName))
+                    {
+                        throw new InvalidDataException($"备份包包含非白名单数据文件 ({dataFileName})。解压已被阻止。");
+                    }
                 }
             }
         }
@@ -146,28 +173,36 @@ public static class BackupService
             string manifestPath = Path.Combine(stagingDir, "manifest.json");
             if (!File.Exists(manifestPath))
             {
-                throw new InvalidOperationException("备份包中缺少 manifest.json 校验元数据。");
+                throw new InvalidDataException("备份包中缺少 manifest.json 校验元数据。");
             }
 
             string manifestJson = File.ReadAllText(manifestPath);
             var manifest = JsonSerializer.Deserialize<BackupManifest>(manifestJson);
             if (manifest == null)
             {
-                throw new InvalidOperationException("manifest.json 解析失败。");
+                throw new InvalidDataException("manifest.json 解析失败。");
             }
 
-            // 4. Validate SHA256 hashes of staged files against manifest
+            // 4. Validate presence, file size, and SHA256 hash of every manifest entry
             foreach (var entry in manifest.Files)
             {
                 string stagedFilePath = Path.Combine(stagingDir, entry.FileName.Replace('/', Path.DirectorySeparatorChar));
-                if (File.Exists(stagedFilePath))
+                if (!File.Exists(stagedFilePath))
                 {
-                    byte[] data = File.ReadAllBytes(stagedFilePath);
-                    string hash = ComputeSha256(data);
-                    if (!string.Equals(hash, entry.Sha256, StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new InvalidOperationException($"文件哈希校验失败 ({entry.FileName})。备份文件可能已被篡改。");
-                    }
+                    throw new InvalidDataException($"备份包损坏: 缺失清单文件 '{entry.FileName}'。");
+                }
+
+                var info = new FileInfo(stagedFilePath);
+                if (info.Length != entry.Size)
+                {
+                    throw new InvalidDataException($"备份包损坏: 文件 '{entry.FileName}' 大小不匹配。期望 {entry.Size} 字节，实际 {info.Length} 字节。");
+                }
+
+                byte[] data = File.ReadAllBytes(stagedFilePath);
+                string hash = ComputeSha256(data);
+                if (!string.Equals(hash, entry.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException($"备份包损坏: 文件 '{entry.FileName}' SHA256 校验不匹配。");
                 }
             }
 
@@ -181,6 +216,7 @@ public static class BackupService
                 RestoreDataFileIfExists(dataDir, "wallpapers.json", AppDataPath.WallpapersFile);
                 RestoreDataFileIfExists(dataDir, "dynamic_sources.json", AppDataPath.DynamicDataFile);
                 RestoreDataFileIfExists(dataDir, "ai_providers.json", AppDataPath.AiProvidersFile);
+                RestoreDataFileIfExists(dataDir, "ai_conversations.json", AppDataPath.AiConversationsFile);
             }
 
             string assetsDir = Path.Combine(stagingDir, "assets");
@@ -190,7 +226,10 @@ public static class BackupService
                 Directory.CreateDirectory(localAssetsFolder);
                 foreach (var assetFile in Directory.GetFiles(assetsDir))
                 {
-                    string dest = Path.Combine(localAssetsFolder, Path.GetFileName(assetFile));
+                    string assetName = Path.GetFileName(assetFile);
+                    if (assetName.Contains("..") || assetName.Contains('/') || assetName.Contains('\\')) continue;
+
+                    string dest = Path.Combine(localAssetsFolder, assetName);
                     byte[] data = File.ReadAllBytes(assetFile);
                     SafeFileWriter.WriteAllBytes(dest, data);
                 }

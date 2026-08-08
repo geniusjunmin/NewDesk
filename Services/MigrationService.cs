@@ -15,13 +15,30 @@ public class MigrationState
     public int AI { get; set; } = 1;
 }
 
+public class MigrationRunResult
+{
+    public bool Success { get; set; } = true;
+    public List<string> FailedDomains { get; set; } = new();
+    public List<string> CompletedSteps { get; set; } = new();
+}
+
 public static class MigrationService
 {
-    public const int TargetSchemaVersion = 2;
+    public static readonly Dictionary<string, int> TargetVersions = new()
+    {
+        { "Settings", 2 },
+        { "Reminders", 2 },
+        { "Wallpapers", 1 },
+        { "DynamicData", 1 },
+        { "Passwords", 1 },
+        { "AI", 1 }
+    };
+
     private static string StateFilePath => Path.Combine(AppDataPath.DataFolder, "migration_state.json");
 
-    public static void RunAllMigrationsIfNeeded()
+    public static MigrationRunResult RunAllMigrationsIfNeeded()
     {
+        var result = new MigrationRunResult();
         try
         {
             AppDataPath.Initialize();
@@ -40,9 +57,12 @@ public static class MigrationService
                     {
                         SetDomainVersion(state, step.Domain, step.ToVersion);
                         stateChanged = true;
+                        result.CompletedSteps.Add($"{step.Domain} ({step.FromVersion}->{step.ToVersion})");
                     }
                     else
                     {
+                        result.Success = false;
+                        result.FailedDomains.Add(step.Domain);
                         AppDataPath.LogError($"Migration step for {step.Domain} failed. State version remaining at {currentVer}.", new Exception("Migration Failed"));
                     }
                 }
@@ -55,8 +75,10 @@ public static class MigrationService
         }
         catch (Exception ex)
         {
+            result.Success = false;
             AppDataPath.LogError("MigrationService.RunAllMigrationsIfNeeded", ex);
         }
+        return result;
     }
 
     private static int GetDomainVersion(MigrationState state, string domain) => domain switch

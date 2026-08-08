@@ -26,9 +26,11 @@ public class AiTurnRequest
     public string? ModelOverride { get; set; }
     public DataSensitivity DataSensitivity { get; set; } = DataSensitivity.Personal;
     public AiDataCategory DataCategories { get; set; } = AiDataCategory.UserPrompt;
+    public AiDataCategory RequestedContextCategories { get; set; } = AiDataCategory.None;
     public CloudRequestMode CloudRequestMode { get; set; } = CloudRequestMode.Interactive;
     public Func<PendingToolAction, Task<bool>>? ConfirmationCallback { get; set; }
     public Func<CloudSendPreview, Task<bool>>? CloudConsentCallback { get; set; }
+    public IProgress<ToolExecutionDisplayInfo>? ToolExecutionProgress { get; set; }
 }
 
 public enum AiTaskProfile
@@ -59,14 +61,29 @@ public static class AiOrchestrator
         }
 
         // 2. Pre-Send Security Endpoint Validation
-        bool hasSecrets = !string.IsNullOrEmpty(providerConfig.SecretId);
-        AiHttpSecurityGuard.ValidateRequest(providerConfig.BaseUrl, hasSecrets);
+        string? secret = SecretStorageService.GetSecret(providerConfig.SecretId);
+        bool transmitsSecrets = !string.IsNullOrEmpty(secret);
+        AiHttpSecurityGuard.ValidateRequest(providerConfig.BaseUrl, transmitsSecrets);
 
-        // 3. Privacy Guard Validation
+        // 3. Build Outbound Messages Payload with Redaction
+        var outboundMessages = AiOutboundContextBuilder.BuildMessages(turnRequest.ConversationHistory, turnRequest.UserPrompt);
+
+        // 4. Build Context
+        var contextResult = AiContextBroker.BuildContextPrompt(turnRequest.RequestedContextCategories);
+
+        // 5. Calculate Actual Categories
+        var actualCategories = turnRequest.DataCategories | contextResult.IncludedCategories;
+
+        // 6. Privacy Guard Validation
         string sanitizedPrompt = SecretRedactor.Redact(turnRequest.UserPrompt);
-        AiPrivacyGuard.ValidateRequest(providerConfig, turnRequest.DataSensitivity, turnRequest.DataCategories, sanitizedPrompt);
+        AiPrivacyGuard.ValidateRequest(providerConfig, turnRequest.DataSensitivity, actualCategories, sanitizedPrompt);
 
-        // 4. Cloud Mode & Consent Handling
+        // 7. System Prompt Construction
+        string systemPrompt = string.IsNullOrEmpty(contextResult.Prompt)
+            ? "你是一个专业、高效的 Windows 桌面 AI 助手。"
+            : $"你是一个专业、高效的 Windows 桌面 AI 助手。\n\n{contextResult.Prompt}";
+
+        // 8. Cloud Mode & Consent Handling
         var settings = SettingsService.LoadSettings();
         bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(providerConfig.BaseUrl);
 
@@ -93,13 +110,16 @@ public static class AiOrchestrator
                         providerConfig.Name,
                         turnRequest.ModelOverride ?? providerConfig.SelectedModel,
                         host,
-                        turnRequest.DataCategories,
+                        turnRequest.DataSensitivity,
+                        actualCategories,
+                        systemPrompt,
+                        outboundMessages,
                         sanitizedPrompt);
 
                     bool consentGranted = await turnRequest.CloudConsentCallback(preview);
                     if (!consentGranted)
                     {
-                        throw new InvalidOperationException("用户取消了云端 AI 发送授权。");
+                        throw new InvalidOperationException("用户取消了发送数据至云端 AI 的操作。");
                     }
                 }
             }
@@ -112,17 +132,7 @@ public static class AiOrchestrator
             }
         }
 
-        // 5. Inject Context
-        var contextResult = AiContextBroker.BuildContextPrompt(turnRequest.DataCategories);
-        string systemPrompt = string.IsNullOrEmpty(contextResult.Prompt)
-            ? "你是一个专业、高效的 Windows 桌面 AI 助手。"
-            : $"你是一个专业、高效的 Windows 桌面 AI 助手。\n\n{contextResult.Prompt}";
-
         var provider = AiProviderFactory.CreateProvider(providerConfig);
-
-        // 6. Build Outbound Messages Payload with Redaction
-        var outboundMessages = AiOutboundContextBuilder.BuildMessages(turnRequest.ConversationHistory, turnRequest.UserPrompt);
-
         var toolDefs = provider.Capabilities.SupportsTools ? AiToolRegistry.GetToolDefinitions() : null;
 
         int currentRound = 0;
@@ -197,6 +207,10 @@ public static class AiOrchestrator
                 {
                     toolResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, turnRequest.ConfirmationCallback);
                 }
+
+                // Report ToolExecutionDisplayInfo to UI progress
+                var displayInfo = ToolExecutionDisplayInfo.Format(toolCall.Name, toolCall.ArgumentsJson, !toolResult.IsError);
+                turnRequest.ToolExecutionProgress?.Report(displayInfo);
 
                 string sanitizedOutput = SecretRedactor.Redact(toolResult.OutputJson);
 

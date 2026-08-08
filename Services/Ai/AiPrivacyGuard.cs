@@ -44,39 +44,36 @@ public static class AiPrivacyGuard
 
         bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(provider.BaseUrl);
 
-        // 2. Local-Only Mode Enforcement
+        // 2. Network Mode Enforcement (LocalOnly)
         if (settings.AiNetworkMode == AiNetworkMode.LocalOnly && !isLocal)
         {
             throw new InvalidOperationException("【隐私防护动效】当前已设定为【仅限本地模型模式】，禁止向云端 AI 发送网络请求。");
         }
 
-        // 3. Category Permission Validation for Remote Endpoint
-        if (!isLocal)
+        // 3. Category Permission Validation (Checked for both Local and Cloud endpoints)
+        if (categories.HasFlag(AiDataCategory.Clipboard) && !settings.AllowAiClipboard)
         {
-            if (categories.HasFlag(AiDataCategory.Clipboard) && !settings.AllowAiClipboard)
-            {
-                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送剪贴板内容。");
-            }
-            if (categories.HasFlag(AiDataCategory.Reminder) && !settings.AllowAiReminderContext)
-            {
-                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送提醒事项上下文。");
-            }
-            if (categories.HasFlag(AiDataCategory.Wallpaper) && !settings.AllowAiWallpaperContext)
-            {
-                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送壁纸上下文。");
-            }
-            if (categories.HasFlag(AiDataCategory.DynamicData) && !settings.AllowAiDynamicDataContext)
-            {
-                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送动态数据上下文。");
-            }
-            if (categories.HasFlag(AiDataCategory.PasswordMetadata) && !settings.AllowAiPasswordMetadata)
-            {
-                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送密码元数据。");
-            }
-            if (categories.HasFlag(AiDataCategory.Logs) && !settings.AllowAiLogAnalysis)
-            {
-                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送日志内容。");
-            }
+            throw new InvalidOperationException("【隐私防护动效】当前未授权 AI 访问剪贴板内容。");
+        }
+        if (categories.HasFlag(AiDataCategory.Reminder) && !settings.AllowAiReminderContext)
+        {
+            throw new InvalidOperationException("【隐私防护动效】当前未授权 AI 访问提醒事项上下文。");
+        }
+        if (categories.HasFlag(AiDataCategory.Wallpaper) && !settings.AllowAiWallpaperContext)
+        {
+            throw new InvalidOperationException("【隐私防护动效】当前未授权 AI 访问壁纸上下文。");
+        }
+        if (categories.HasFlag(AiDataCategory.DynamicData) && !settings.AllowAiDynamicDataContext)
+        {
+            throw new InvalidOperationException("【隐私防护动效】当前未授权 AI 访问动态数据上下文。");
+        }
+        if (categories.HasFlag(AiDataCategory.PasswordMetadata) && !settings.AllowAiPasswordMetadata)
+        {
+            throw new InvalidOperationException("【隐私防护动效】当前未授权 AI 访问密码元数据。");
+        }
+        if (categories.HasFlag(AiDataCategory.Logs) && !settings.AllowAiLogAnalysis)
+        {
+            throw new InvalidOperationException("【隐私防护动效】当前未授权 AI 访问日志内容。");
         }
     }
 }

@@ -95,6 +95,10 @@ public static class WallpaperService
     public static string GetAssetPath(string assetId)
     {
         if (string.IsNullOrEmpty(assetId)) return string.Empty;
+        if (assetId.Contains("..") || assetId.Contains('/') || assetId.Contains('\\'))
+        {
+            throw new ArgumentException($"非法壁纸 Asset ID 路径: '{assetId}'。不允许包含路径穿越字符。");
+        }
         if (Path.IsPathRooted(assetId)) return assetId;
         return Path.Combine(AppDataPath.DataFolder, "Wallpapers", "Assets", assetId);
     }
@@ -103,8 +107,15 @@ public static class WallpaperService
     {
         if (!string.IsNullOrEmpty(assetId))
         {
-            string assetPath = GetAssetPath(assetId);
-            if (File.Exists(assetPath)) return assetPath;
+            try
+            {
+                string assetPath = GetAssetPath(assetId);
+                if (File.Exists(assetPath)) return assetPath;
+            }
+            catch
+            {
+                // Safety catch for invalid asset IDs
+            }
         }
 
         if (!string.IsNullOrEmpty(path) && File.Exists(path))
@@ -223,7 +234,8 @@ public static class WallpaperService
 
         // 1. Fetch Dynamic Data & Legacy API Data with single-request Task deduplication per render pass
         var dataSourceTasks = new Dictionary<string, Task<string>>();
-        var sourceMap = DynamicDataService.LoadSources().ToDictionary(s => s.Id, s => s);
+        var sources = DynamicDataService.LoadSources();
+        var sourceMap = sources.ToDictionary(s => s.Id, s => s);
 
         foreach (var element in state.TextElements.Where(e => e.IsVisible))
         {
@@ -246,15 +258,9 @@ public static class WallpaperService
 
         await Task.WhenAll(dataSourceTasks.Values);
 
-        var dataResults = new Dictionary<string, string>();
-        foreach (var kvp in dataSourceTasks)
-        {
-            dataResults[kvp.Key] = kvp.Value.Result;
-        }
-
         string bgPath = ResolveAssetPath(state.BackgroundImagePath, state.BackgroundAssetId);
 
-        // 2. Render and Set Desktop Wallpaper
+        // 2. Render and Set Desktop Wallpaper using WallpaperPreviewRenderer
         await Application.Current.Dispatcher.InvokeAsync(async () =>
         {
             try
@@ -282,30 +288,20 @@ public static class WallpaperService
 
                     using (var dc = drawingVisual.RenderOpen())
                     {
+                        ImageSource? bgImage = null;
                         if (!string.IsNullOrEmpty(bgPath) && File.Exists(bgPath))
                         {
-                            var originalImage = BitmapFrame.Create(new Uri(bgPath), BitmapCreateOptions.IgnoreImageCache, BitmapCacheOption.OnLoad);
-                            dc.DrawRectangle(new ImageBrush(originalImage) { Stretch = Stretch.UniformToFill, AlignmentX = AlignmentX.Center, AlignmentY = AlignmentY.Center }, null, new Rect(0, 0, pixelWidth, pixelHeight));
+                            bgImage = BitmapFrame.Create(new Uri(bgPath), BitmapCreateOptions.IgnoreImageCache, BitmapCacheOption.OnLoad);
                         }
-                        else dc.DrawRectangle(Brushes.Black, null, new Rect(0, 0, pixelWidth, pixelHeight));
 
-                        double scaleX = state.DesignWidth > 0 ? (double)pixelWidth / state.DesignWidth : 1.0;
-                        double scaleY = state.DesignHeight > 0 ? (double)pixelHeight / state.DesignHeight : 1.0;
-
-                        foreach (var element in state.TextElements.Where(e => e.IsVisible))
-                        {
-                            string dataText = "";
-                            if (!string.IsNullOrEmpty(element.DataSourceId) && dataResults.TryGetValue(element.DataSourceId, out var val1))
-                            {
-                                dataText = val1;
-                            }
-                            else if (!string.IsNullOrEmpty(element.ApiUrl) && dataResults.TryGetValue(element.ApiUrl, out var val2))
-                            {
-                                dataText = val2;
-                            }
-
-                            WallpaperTextRenderer.DrawElement(dc, element, dataText, scaleX, scaleY);
-                        }
+                        WallpaperPreviewRenderer.DrawWallpaperPreview(
+                            dc,
+                            state.TextElements,
+                            new Size(pixelWidth, pixelHeight),
+                            state.DesignWidth > 0 ? state.DesignWidth : 1920,
+                            state.DesignHeight > 0 ? state.DesignHeight : 1080,
+                            bgImage,
+                            sources);
                     }
 
                     var rtb = new RenderTargetBitmap(pixelWidth, pixelHeight, 96, 96, PixelFormats.Pbgra32);

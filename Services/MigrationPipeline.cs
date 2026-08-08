@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using NewDesk.Models;
 
 namespace NewDesk.Services;
 
@@ -24,7 +25,7 @@ public class SettingsV1ToV2MigrationStep : IMigrationStep
         try
         {
             var settings = SettingsService.LoadSettings();
-            settings.LastRunVersion = "2.2.2";
+            settings.LastRunVersion = "2.2.3";
             SettingsService.SaveSettings(settings);
             return true;
         }
@@ -42,20 +43,51 @@ public class RemindersV1ToV2MigrationStep : IMigrationStep
     {
         try
         {
+            string remindersPath = AppDataPath.RemindersFile;
+            if (!File.Exists(remindersPath)) return true;
+
+            // 1. Create Migration Backup ZIP/JSON before migrating
+            string backupDir = Path.Combine(AppDataPath.DataFolder, "Backups", "Migration");
+            Directory.CreateDirectory(backupDir);
+            string backupFile = Path.Combine(backupDir, $"reminders_before_v2_{DateTime.Now:yyyyMMdd_HHmmss}.json");
+            File.Copy(remindersPath, backupFile, overwrite: true);
+
+            // 2. Read raw JsonDocument to detect legacy schema without ScheduleType/DueAt
+            string json = File.ReadAllText(remindersPath);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return true;
+
             var reminders = DataService.LoadReminders();
-            foreach (var r in reminders)
+            int idx = 0;
+
+            foreach (var elem in doc.RootElement.EnumerateArray())
             {
-                if (!r.DueAt.HasValue)
+                if (idx >= reminders.Count) break;
+                var reminderObj = reminders[idx];
+
+                bool hasScheduleType = elem.TryGetProperty("ScheduleType", out _);
+                bool hasDueAt = elem.TryGetProperty("DueAt", out var dueProp) && dueProp.ValueKind != JsonValueKind.Null;
+
+                if (!hasScheduleType && !hasDueAt)
                 {
-                    int hours = r.TimeOfDay?.Hours ?? 9;
-                    int minutes = r.TimeOfDay?.Minutes ?? 0;
-                    r.DueAt = new DateTime(DateTime.Now.Year, r.Month, r.Day, hours, minutes, 0);
+                    // Legacy annual reminder
+                    bool isLunar = elem.TryGetProperty("IsLunar", out var l) && l.GetBoolean();
+                    reminderObj.ScheduleType = isLunar ? ReminderScheduleType.LunarYearly : ReminderScheduleType.Yearly;
+                    reminderObj.IsLunar = isLunar;
+                    reminderObj.DueAt = null;
+                    reminderObj.TimeOfDay ??= new TimeSpan(9, 0, 0);
                 }
+                idx++;
             }
+
             DataService.SaveReminders(reminders);
             return true;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            AppDataPath.LogError("RemindersV1ToV2MigrationStep", ex);
+            return false;
+        }
     }
 }
 

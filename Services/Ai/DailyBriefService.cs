@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Threading.Tasks;
 using NewDesk.Models.Ai;
 
@@ -19,15 +18,16 @@ public static class DailyBriefService
 
         try
         {
-            string context = AiContextBroker.BuildContextPrompt(AiDataCategory.Reminder | AiDataCategory.Wallpaper).Prompt;
-            string prompt = $"请根据以下桌面状态，生成一段不超过 100 字的今日晨间/日间高效生活与工作小结（语言亲切温暖）：\n{context}";
+            string prompt = "请根据当前桌面状态，生成一段不超过 100 字的今日晨间/日间高效生活与工作小结（语言亲切温暖）：";
 
             var req = new AiTurnRequest
             {
                 UserPrompt = prompt,
                 TaskProfile = AiTaskProfile.GeneralChat,
                 DataSensitivity = DataSensitivity.Personal,
-                DataCategories = AiDataCategory.Reminder | AiDataCategory.Wallpaper
+                DataCategories = AiDataCategory.UserPrompt,
+                RequestedContextCategories = AiDataCategory.Reminder | AiDataCategory.Wallpaper,
+                CloudRequestMode = CloudRequestMode.PreAuthorizedBackground
             };
 
             var resp = await AiOrchestrator.ExecuteTurnAsync(req);

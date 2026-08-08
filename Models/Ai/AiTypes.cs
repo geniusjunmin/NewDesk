@@ -36,11 +36,6 @@ public class AiProviderCapabilities
     public bool SupportsResponsesApi { get; set; } = false;
     public bool SupportsModelListing { get; set; } = true;
     public bool IsLocal { get; set; } = false;
-
-    // Overrides
-    public bool? SupportsToolsOverride { get; set; }
-    public bool? SupportsVisionOverride { get; set; }
-    public bool? SupportsStructuredOutputOverride { get; set; }
 }
 
 public class AiProviderConfig
@@ -57,6 +52,11 @@ public class AiProviderConfig
     public bool IsEnabled { get; set; } = true;
     public bool IsDefault { get; set; } = false;
 
+    // Overrides
+    public bool? SupportsToolsOverride { get; set; }
+    public bool? SupportsVisionOverride { get; set; }
+    public bool? SupportsStructuredOutputOverride { get; set; }
+
     public AiProviderConfig Clone()
     {
         return new AiProviderConfig
@@ -71,7 +71,10 @@ public class AiProviderConfig
             Streaming = this.Streaming,
             TimeoutSeconds = this.TimeoutSeconds,
             IsEnabled = this.IsEnabled,
-            IsDefault = this.IsDefault
+            IsDefault = this.IsDefault,
+            SupportsToolsOverride = this.SupportsToolsOverride,
+            SupportsVisionOverride = this.SupportsVisionOverride,
+            SupportsStructuredOutputOverride = this.SupportsStructuredOutputOverride
         };
     }
 }

@@ -63,6 +63,11 @@ public partial class AiAssistantView : UserControl
         if (ProviderComboBox.SelectedIndex < providers.Count)
         {
             _currentProviderConfig = providers[ProviderComboBox.SelectedIndex];
+            if (_currentConversation != null && _currentProviderConfig != null)
+            {
+                _currentConversation.ProviderId = _currentProviderConfig.ProviderId;
+                _currentConversation.ModelId = _currentProviderConfig.SelectedModel;
+            }
             UpdateBadge();
         }
     }
@@ -102,6 +107,21 @@ public partial class AiAssistantView : UserControl
         if (ConversationsListBox.SelectedItem is AiConversation conv)
         {
             _currentConversation = conv;
+
+            if (!string.IsNullOrEmpty(conv.ProviderId))
+            {
+                var providers = AiProviderRegistry.GetAllProviders().Where(p => p.IsEnabled).ToList();
+                int idx = providers.FindIndex(p => p.ProviderId == conv.ProviderId);
+                if (idx >= 0)
+                {
+                    ProviderComboBox.SelectedIndex = idx;
+                }
+                else
+                {
+                    ToastManager.Show("AI 服务提示", "原 AI 服务已删除，请选择新的 AI 服务。", ToastType.Warning);
+                }
+            }
+
             RenderCurrentConversation();
         }
     }
@@ -109,6 +129,11 @@ public partial class AiAssistantView : UserControl
     private void NewChatButton_Click(object sender, RoutedEventArgs e)
     {
         _currentConversation = AiConversationService.CreateNewConversation();
+        if (_currentProviderConfig != null)
+        {
+            _currentConversation.ProviderId = _currentProviderConfig.ProviderId;
+            _currentConversation.ModelId = _currentProviderConfig.SelectedModel;
+        }
         LoadConversationsList();
         ConversationsListBox.SelectedItem = _currentConversation;
     }
@@ -168,7 +193,7 @@ public partial class AiAssistantView : UserControl
         };
         panel.Children.Add(headerText);
 
-        // Render Reasoning Summary if available (Phase 13: User facing summary only)
+        // Render Reasoning Summary if available
         if (!string.IsNullOrEmpty(msg.ReasoningSummary))
         {
             var exp = new Expander
@@ -233,6 +258,9 @@ public partial class AiAssistantView : UserControl
             _currentConversation = AiConversationService.CreateNewConversation();
         }
 
+        _currentConversation.ProviderId = _currentProviderConfig.ProviderId;
+        _currentConversation.ModelId = _currentProviderConfig.SelectedModel;
+
         InputTextBox.Text = string.Empty;
 
         var historyForModel = AiConversationService.GetTruncatedContextMessages(_currentConversation.Messages);
@@ -289,7 +317,8 @@ public partial class AiAssistantView : UserControl
                 ConversationHistory = historyForModel,
                 PreferredProvider = _currentProviderConfig,
                 DataSensitivity = DataSensitivity.Personal,
-                DataCategories = AiDataCategory.UserPrompt | AiDataCategory.Reminder | AiDataCategory.Wallpaper,
+                DataCategories = AiDataCategory.UserPrompt,
+                RequestedContextCategories = AiDataCategory.Reminder | AiDataCategory.Wallpaper,
                 ConfirmationCallback = async pending =>
                 {
                     var confirmDialog = new Dialogs.ConfirmDialog("AI 工具操作请求", pending.HumanReadablePreview)
@@ -298,7 +327,27 @@ public partial class AiAssistantView : UserControl
                     };
                     return confirmDialog.ShowDialog() == true;
                 },
-                CloudConsentCallback = preview => CloudConsentService.ShowInteractiveConsentAsync(Window.GetWindow(this), preview)
+                CloudConsentCallback = preview => CloudConsentService.ShowInteractiveConsentAsync(Window.GetWindow(this), preview),
+                ToolExecutionProgress = new Progress<ToolExecutionDisplayInfo>(info =>
+                {
+                    var toolBadge = new Border
+                    {
+                        Background = (Brush)FindResource("SurfaceBackground"),
+                        BorderBrush = (Brush)FindResource("BorderBrush"),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(8),
+                        Padding = new Thickness(8, 6, 8, 6),
+                        Margin = new Thickness(0, 4, 0, 4)
+                    };
+                    var tb = new TextBlock
+                    {
+                        Text = $"{info.Icon} {info.Title} · {info.Detail}",
+                        FontSize = 12,
+                        Foreground = (Brush)FindResource("TextSecondaryBrush")
+                    };
+                    toolBadge.Child = tb;
+                    aiPanel.Children.Insert(aiPanel.Children.Count - 1, toolBadge);
+                })
             };
 
             var progress = new Progress<AiStreamChunk>(chunk =>

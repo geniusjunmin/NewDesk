@@ -31,17 +31,32 @@ public class OpenAiCompatibleProvider : IAiProvider
 
         bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(config.BaseUrl);
 
+        bool defaultSupportsTools = config.Kind switch
+        {
+            AiProviderKind.OpenAICompatible or AiProviderKind.Custom => false,
+            _ => true
+        };
+        bool defaultSupportsVision = config.Kind == AiProviderKind.OpenAI;
+        bool defaultSupportsStructuredOutput = config.Kind != AiProviderKind.OpenAICompatible && config.Kind != AiProviderKind.Custom;
+
         Capabilities = new AiProviderCapabilities
         {
             SupportsStreaming = config.Streaming,
-            SupportsVision = false,
-            SupportsTools = true,
-            SupportsStructuredOutput = true,
+            SupportsVision = config.SupportsVisionOverride ?? defaultSupportsVision,
+            SupportsTools = config.SupportsToolsOverride ?? defaultSupportsTools,
+            SupportsStructuredOutput = config.SupportsStructuredOutputOverride ?? defaultSupportsStructuredOutput,
             SupportsReasoning = config.Kind == AiProviderKind.DeepSeek,
             SupportsResponsesApi = false,
             SupportsModelListing = true,
             IsLocal = isLocal
         };
+    }
+
+    private void ValidateEndpointBeforeSend()
+    {
+        string? secret = SecretStorageService.GetSecret(Config.SecretId);
+        bool transmitsSecrets = !string.IsNullOrEmpty(secret);
+        AiHttpSecurityGuard.ValidateRequest(Config.BaseUrl, transmitsSecrets);
     }
 
     private void ApplyHeaders(HttpRequestMessage request)
@@ -101,6 +116,8 @@ public class OpenAiCompatibleProvider : IAiProvider
 
     public async Task<IReadOnlyList<AiModelInfo>> GetModelsAsync(CancellationToken cancellationToken = default)
     {
+        ValidateEndpointBeforeSend();
+
         string url = Config.BaseUrl.TrimEnd('/') + "/models";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         ApplyHeaders(req);
@@ -128,6 +145,8 @@ public class OpenAiCompatibleProvider : IAiProvider
 
     public async Task<AiResponse> CompleteAsync(AiRequest request, CancellationToken cancellationToken = default)
     {
+        ValidateEndpointBeforeSend();
+
         string url = Config.BaseUrl.TrimEnd('/') + "/chat/completions";
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         ApplyHeaders(req);
@@ -143,7 +162,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         var root = doc.RootElement;
 
         string content = "";
-        string? reasoning = null;
+        string? reasoningSummary = null;
         var toolCalls = new List<AiToolCall>();
 
         if (root.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array && choices.GetArrayLength() > 0)
@@ -153,9 +172,13 @@ public class OpenAiCompatibleProvider : IAiProvider
             {
                 content = cElem.GetString() ?? "";
             }
-            if (msgObj.TryGetProperty("reasoning_content", out var rElem) && rElem.ValueKind == JsonValueKind.String)
+            if (msgObj.TryGetProperty("reasoning_summary", out var rsElem) && rsElem.ValueKind == JsonValueKind.String)
             {
-                reasoning = rElem.GetString();
+                reasoningSummary = rsElem.GetString();
+            }
+            else if (msgObj.TryGetProperty("summary", out var sElem) && sElem.ValueKind == JsonValueKind.String)
+            {
+                reasoningSummary = sElem.GetString();
             }
 
             if (msgObj.TryGetProperty("tool_calls", out var tcElem) && tcElem.ValueKind == JsonValueKind.Array)
@@ -174,7 +197,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         return new AiResponse
         {
             Content = content,
-            ReasoningSummary = reasoning,
+            ReasoningSummary = reasoningSummary,
             Usage = usage,
             ToolCalls = toolCalls
         };
@@ -182,6 +205,8 @@ public class OpenAiCompatibleProvider : IAiProvider
 
     public async IAsyncEnumerable<AiStreamChunk> StreamAsync(AiRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        ValidateEndpointBeforeSend();
+
         string url = Config.BaseUrl.TrimEnd('/') + "/chat/completions";
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         ApplyHeaders(req);
@@ -235,7 +260,17 @@ public class OpenAiCompatibleProvider : IAiProvider
                     {
                         var delta = choices[0].GetProperty("delta");
                         string? textDelta = delta.TryGetProperty("content", out var cElem) ? cElem.GetString() : null;
-                        string? reasoningDelta = delta.TryGetProperty("reasoning_content", out var rElem) ? rElem.GetString() : null;
+                        
+                        string? reasoningDelta = null;
+                        if (delta.TryGetProperty("reasoning_summary", out var rsElem) && rsElem.ValueKind == JsonValueKind.String)
+                        {
+                            reasoningDelta = rsElem.GetString();
+                        }
+                        else if (delta.TryGetProperty("summary", out var sElem) && sElem.ValueKind == JsonValueKind.String)
+                        {
+                            reasoningDelta = sElem.GetString();
+                        }
+
                         string? finishReason = choices[0].TryGetProperty("finish_reason", out var fr) ? fr.GetString() : null;
 
                         if (delta.TryGetProperty("tool_calls", out var tcArr) && tcArr.ValueKind == JsonValueKind.Array)

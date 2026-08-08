@@ -21,7 +21,7 @@ public class BackupServiceTests
                 writer.Write("malicious content");
             }
 
-            var ex = Assert.Throws<InvalidOperationException>(() => BackupService.RestoreBackup(tempZip));
+            var ex = Assert.Throws<InvalidDataException>(() => BackupService.RestoreBackup(tempZip));
             Assert.Contains("非法路径", ex.Message);
         }
         finally
