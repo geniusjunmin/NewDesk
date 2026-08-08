@@ -283,7 +283,9 @@ public partial class AiAssistantView : UserControl
             var turnRequest = new AiTurnRequest
             {
                 UserPrompt = prompt,
-                ConversationHistory = AiConversationService.GetTruncatedContextMessages(_currentConversation.Messages),
+                ConversationHistory = AiConversationService.GetTruncatedContextMessages(
+                    _currentConversation.Messages.Where(m => m.Id != userMsg.Id).ToList()
+                ),
                 PreferredProvider = _currentProviderConfig,
                 DataSensitivity = DataSensitivity.Personal,
                 ConfirmationCallback = async pending =>

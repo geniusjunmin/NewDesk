@@ -17,6 +17,11 @@ public class SystemInfoTool : IAiTool
         properties = new { }
     };
 
+    public string BuildConfirmationPreview(string argumentsJson)
+    {
+        return "🤖 AI 准备读取当前 Windows 系统与客户端版本信息（只读）。";
+    }
+
     public Task<AiToolResult> ExecuteAsync(string argumentsJson)
     {
         var info = new
@@ -25,7 +30,7 @@ public class SystemInfoTool : IAiTool
             Is64BitOS = Environment.Is64BitOperatingSystem,
             ProcessorCount = Environment.ProcessorCount,
             MachineName = Environment.MachineName,
-            AppVersion = "2.1.0",
+            AppVersion = "2.2.0",
             DotNetVersion = Environment.Version.ToString()
         };
 

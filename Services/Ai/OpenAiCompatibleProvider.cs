@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
@@ -10,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NewDesk.Models.Ai;
+using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
 
@@ -26,7 +28,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         Config = config;
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(Math.Max(5, config.TimeoutSeconds)) };
 
-        bool isLocal = config.Kind == AiProviderKind.Ollama || config.Kind == AiProviderKind.LMStudio || config.BaseUrl.Contains("localhost") || config.BaseUrl.Contains("127.0.0.1");
+        bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(config.BaseUrl);
 
         Capabilities = new AiProviderCapabilities
         {
@@ -43,12 +45,12 @@ public class OpenAiCompatibleProvider : IAiProvider
 
     private void ApplyHeaders(HttpRequestMessage request)
     {
-        string? secret = AiSecretStorageService.GetSecret(Config.SecretId);
+        string? secret = SecretStorageService.GetSecret(Config.SecretId);
         if (!string.IsNullOrEmpty(secret))
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
         }
-        request.Headers.UserAgent.ParseAdd("NewDesk/2.0");
+        request.Headers.UserAgent.ParseAdd("NewDesk/2.2");
     }
 
     public async Task<AiConnectionResult> TestConnectionAsync(CancellationToken cancellationToken = default)
@@ -141,7 +143,7 @@ public class OpenAiCompatibleProvider : IAiProvider
 
         string content = "";
         string? reasoning = null;
-        var toolCalls = new List<AiToolCall>();
+        List<AiToolCall>? toolCalls = null;
 
         if (root.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array && choices.GetArrayLength() > 0)
         {
@@ -153,6 +155,11 @@ public class OpenAiCompatibleProvider : IAiProvider
             if (msgObj.TryGetProperty("reasoning_content", out var rElem) && rElem.ValueKind == JsonValueKind.String)
             {
                 reasoning = rElem.GetString();
+            }
+
+            if (msgObj.TryGetProperty("tool_calls", out var tcElem) && tcElem.ValueKind == JsonValueKind.Array)
+            {
+                toolCalls = ParseToolCalls(tcElem);
             }
         }
 
@@ -168,7 +175,7 @@ public class OpenAiCompatibleProvider : IAiProvider
             Content = content,
             ReasoningSummary = reasoning,
             Usage = usage,
-            ToolCalls = toolCalls.Count > 0 ? toolCalls : null
+            ToolCalls = toolCalls
         };
     }
 
@@ -187,6 +194,8 @@ public class OpenAiCompatibleProvider : IAiProvider
         using var stream = await resp.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
+        var toolCallAccumulator = new Dictionary<int, (string id, string name, StringBuilder args)>();
+
         while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
         {
             string? line = await reader.ReadLineAsync(cancellationToken);
@@ -197,7 +206,21 @@ public class OpenAiCompatibleProvider : IAiProvider
                 string data = line[6..].Trim();
                 if (data == "[DONE]")
                 {
-                    yield return new AiStreamChunk { IsDone = true };
+                    if (toolCallAccumulator.Count > 0)
+                    {
+                        var toolCalls = toolCallAccumulator.Values.Select(v => new AiToolCall
+                        {
+                            Id = v.id,
+                            Name = v.name,
+                            ArgumentsJson = v.args.ToString()
+                        }).ToList();
+
+                        yield return new AiStreamChunk { ToolCalls = toolCalls, IsDone = true };
+                    }
+                    else
+                    {
+                        yield return new AiStreamChunk { IsDone = true };
+                    }
                     yield break;
                 }
 
@@ -213,6 +236,33 @@ public class OpenAiCompatibleProvider : IAiProvider
                         string? textDelta = delta.TryGetProperty("content", out var cElem) ? cElem.GetString() : null;
                         string? reasoningDelta = delta.TryGetProperty("reasoning_content", out var rElem) ? rElem.GetString() : null;
                         string? finishReason = choices[0].TryGetProperty("finish_reason", out var fr) ? fr.GetString() : null;
+
+                        if (delta.TryGetProperty("tool_calls", out var tcArr) && tcArr.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var tcItem in tcArr.EnumerateArray())
+                            {
+                                int index = tcItem.TryGetProperty("index", out var idx) ? idx.GetInt32() : 0;
+                                string id = tcItem.TryGetProperty("id", out var idElem) ? idElem.GetString() ?? "" : "";
+                                string name = "";
+
+                                if (tcItem.TryGetProperty("function", out var fnElem))
+                                {
+                                    if (fnElem.TryGetProperty("name", out var nElem)) name = nElem.GetString() ?? "";
+                                    string argChunk = fnElem.TryGetProperty("arguments", out var aElem) ? aElem.GetString() ?? "" : "";
+
+                                    if (!toolCallAccumulator.TryGetValue(index, out var existing))
+                                    {
+                                        existing = (id, name, new StringBuilder());
+                                    }
+
+                                    if (!string.IsNullOrEmpty(id)) existing.id = id;
+                                    if (!string.IsNullOrEmpty(name)) existing.name = name;
+                                    existing.args.Append(argChunk);
+
+                                    toolCallAccumulator[index] = existing;
+                                }
+                            }
+                        }
 
                         chunk = new AiStreamChunk
                         {
@@ -243,16 +293,72 @@ public class OpenAiCompatibleProvider : IAiProvider
 
         foreach (var msg in request.Messages)
         {
-            messagesList.Add(new { role = msg.Role, content = msg.Content });
+            if (msg.Role == "assistant" && msg.ToolCalls != null && msg.ToolCalls.Count > 0)
+            {
+                messagesList.Add(new
+                {
+                    role = "assistant",
+                    content = msg.Content,
+                    tool_calls = msg.ToolCalls.Select(tc => new
+                    {
+                        id = tc.Id,
+                        type = "function",
+                        function = new { name = tc.Name, arguments = tc.ArgumentsJson }
+                    }).ToList()
+                });
+            }
+            else if (msg.Role == "tool")
+            {
+                messagesList.Add(new
+                {
+                    role = "tool",
+                    tool_call_id = msg.ToolCallId ?? "",
+                    content = msg.Content
+                });
+            }
+            else
+            {
+                messagesList.Add(new { role = msg.Role, content = msg.Content });
+            }
         }
 
-        return new
+        var reqBody = new Dictionary<string, object>
         {
-            model = string.IsNullOrEmpty(request.Model) ? Config.SelectedModel : request.Model,
-            messages = messagesList,
-            temperature = request.Temperature,
-            max_tokens = request.MaxTokens,
-            stream = stream
+            ["model"] = string.IsNullOrEmpty(request.Model) ? Config.SelectedModel : request.Model,
+            ["messages"] = messagesList,
+            ["temperature"] = request.Temperature,
+            ["max_tokens"] = request.MaxTokens,
+            ["stream"] = stream
         };
+
+        if (Capabilities.SupportsTools && request.Tools != null && request.Tools.Count > 0)
+        {
+            reqBody["tools"] = request.Tools;
+            reqBody["tool_choice"] = "auto";
+        }
+
+        return reqBody;
+    }
+
+    private static List<AiToolCall> ParseToolCalls(JsonElement toolCallsArray)
+    {
+        var result = new List<AiToolCall>();
+        foreach (var tc in toolCallsArray.EnumerateArray())
+        {
+            string id = tc.TryGetProperty("id", out var idElem) ? idElem.GetString() ?? "" : "";
+            if (tc.TryGetProperty("function", out var fnElem))
+            {
+                string name = fnElem.TryGetProperty("name", out var nElem) ? nElem.GetString() ?? "" : "";
+                string args = fnElem.TryGetProperty("arguments", out var aElem) ? aElem.GetString() ?? "{}" : "{}";
+
+                result.Add(new AiToolCall
+                {
+                    Id = id,
+                    Name = name,
+                    ArgumentsJson = args
+                });
+            }
+        }
+        return result;
     }
 }

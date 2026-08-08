@@ -67,13 +67,24 @@ public static class AiToolExecutionService
             };
         }
 
-        if (permission == AiToolPermission.RequiresConfirmation && userConfirmationCallback != null)
+        if (permission == AiToolPermission.RequiresConfirmation)
         {
+            // Strict Phase 7 Requirement: If confirmation callback is null, DENY execution!
+            if (userConfirmationCallback == null)
+            {
+                return new AiToolResult
+                {
+                    ToolCallId = toolCall.Id,
+                    IsError = true,
+                    OutputJson = "{\"error\": \"安全防线系统阻断：缺少用户确认机制，无法执行具有副作用的操作。\"}"
+                };
+            }
+
             var pendingAction = new PendingToolAction
             {
                 Tool = tool,
                 ArgumentsJson = toolCall.ArgumentsJson,
-                HumanReadablePreview = $"🤖 AI 请求执行操作 [{tool.Name}]: {tool.Description}\n参数: {toolCall.ArgumentsJson}"
+                HumanReadablePreview = tool.BuildConfirmationPreview(toolCall.ArgumentsJson)
             };
 
             bool confirmed = await userConfirmationCallback(pendingAction);

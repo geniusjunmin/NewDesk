@@ -10,5 +10,6 @@ public interface IAiTool
     bool RequiresUserConfirmation { get; }
     object ParametersSchema { get; }
 
+    string BuildConfirmationPreview(string argumentsJson);
     Task<AiToolResult> ExecuteAsync(string argumentsJson);
 }

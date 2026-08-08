@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -9,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NewDesk.Models.Ai;
+using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
 
@@ -40,13 +42,13 @@ public class AnthropicMessagesProvider : IAiProvider
 
     private void ApplyHeaders(HttpRequestMessage request)
     {
-        string? secret = AiSecretStorageService.GetSecret(Config.SecretId);
+        string? secret = SecretStorageService.GetSecret(Config.SecretId);
         if (!string.IsNullOrEmpty(secret))
         {
             request.Headers.Add("x-api-key", secret);
         }
         request.Headers.Add("anthropic-version", "2023-06-01");
-        request.Headers.UserAgent.ParseAdd("NewDesk/2.0");
+        request.Headers.UserAgent.ParseAdd("NewDesk/2.2");
     }
 
     public async Task<AiConnectionResult> TestConnectionAsync(CancellationToken cancellationToken = default)
@@ -111,13 +113,25 @@ public class AnthropicMessagesProvider : IAiProvider
         var root = doc.RootElement;
 
         string content = "";
+        List<AiToolCall>? toolCalls = null;
+
         if (root.TryGetProperty("content", out var contentArr) && contentArr.ValueKind == JsonValueKind.Array)
         {
             foreach (var elem in contentArr.EnumerateArray())
             {
-                if (elem.TryGetProperty("text", out var tElem))
+                string type = elem.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+                if (type == "text" && elem.TryGetProperty("text", out var tElem))
                 {
                     content += tElem.GetString();
+                }
+                else if (type == "tool_use")
+                {
+                    string id = elem.TryGetProperty("id", out var idElem) ? idElem.GetString() ?? "" : "";
+                    string name = elem.TryGetProperty("name", out var nElem) ? nElem.GetString() ?? "" : "";
+                    string inputJson = elem.TryGetProperty("input", out var inElem) ? inElem.GetRawText() : "{}";
+
+                    toolCalls ??= new List<AiToolCall>();
+                    toolCalls.Add(new AiToolCall { Id = id, Name = name, ArgumentsJson = inputJson });
                 }
             }
         }
@@ -132,7 +146,8 @@ public class AnthropicMessagesProvider : IAiProvider
         return new AiResponse
         {
             Content = content,
-            Usage = usage
+            Usage = usage,
+            ToolCalls = toolCalls
         };
     }
 
@@ -205,16 +220,78 @@ public class AnthropicMessagesProvider : IAiProvider
         foreach (var msg in request.Messages)
         {
             if (msg.Role == "system") continue;
-            messagesList.Add(new { role = msg.Role, content = msg.Content });
+
+            if (msg.Role == "tool")
+            {
+                messagesList.Add(new
+                {
+                    role = "user",
+                    content = new object[]
+                    {
+                        new { type = "tool_result", tool_use_id = msg.ToolCallId ?? "", content = msg.Content }
+                    }
+                });
+            }
+            else if (msg.Role == "assistant" && msg.ToolCalls != null && msg.ToolCalls.Count > 0)
+            {
+                var contentBlocks = new List<object>();
+                if (!string.IsNullOrEmpty(msg.Content))
+                {
+                    contentBlocks.Add(new { type = "text", text = msg.Content });
+                }
+                foreach (var tc in msg.ToolCalls)
+                {
+                    object inputObj = new { };
+                    try { inputObj = JsonSerializer.Deserialize<object>(tc.ArgumentsJson) ?? new { }; } catch { }
+                    contentBlocks.Add(new { type = "tool_use", id = tc.Id, name = tc.Name, input = inputObj });
+                }
+                messagesList.Add(new { role = "assistant", content = contentBlocks });
+            }
+            else
+            {
+                messagesList.Add(new { role = msg.Role, content = msg.Content });
+            }
         }
 
-        return new
+        var reqBody = new Dictionary<string, object>
         {
-            model = string.IsNullOrEmpty(request.Model) ? Config.SelectedModel : request.Model,
-            messages = messagesList,
-            system = request.SystemPrompt,
-            max_tokens = request.MaxTokens,
-            stream = stream
+            ["model"] = string.IsNullOrEmpty(request.Model) ? Config.SelectedModel : request.Model,
+            ["messages"] = messagesList,
+            ["max_tokens"] = request.MaxTokens > 0 ? request.MaxTokens : 2048,
+            ["stream"] = stream
         };
+
+        if (!string.IsNullOrEmpty(request.SystemPrompt))
+        {
+            reqBody["system"] = request.SystemPrompt;
+        }
+
+        if (Capabilities.SupportsTools && request.Tools != null && request.Tools.Count > 0)
+        {
+            var anthropicTools = new List<object>();
+            foreach (var tool in request.Tools)
+            {
+                // Map function tool parameters to Anthropic input_schema
+                if (tool is IDictionary<string, object> dict && dict.TryGetValue("function", out var fn) && fn is IDictionary<string, object> fnDict)
+                {
+                    string name = fnDict.TryGetValue("name", out var n) ? n?.ToString() ?? "" : "";
+                    string desc = fnDict.TryGetValue("description", out var d) ? d?.ToString() ?? "" : "";
+                    object paramsSchema = fnDict.TryGetValue("parameters", out var p) ? p ?? new { type = "object", properties = new { } } : new { type = "object", properties = new { } };
+
+                    anthropicTools.Add(new
+                    {
+                        name = name,
+                        description = desc,
+                        input_schema = paramsSchema
+                    });
+                }
+            }
+            if (anthropicTools.Count > 0)
+            {
+                reqBody["tools"] = anthropicTools;
+            }
+        }
+
+        return reqBody;
     }
 }

@@ -17,6 +17,11 @@ public class WallpaperSwitchTool : IAiTool
         properties = new { }
     };
 
+    public string BuildConfirmationPreview(string argumentsJson)
+    {
+        return "🤖 AI 准备为您切换桌面壁纸至下一张模板。";
+    }
+
     public async Task<AiToolResult> ExecuteAsync(string argumentsJson)
     {
         try

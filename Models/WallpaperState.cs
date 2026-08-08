@@ -17,7 +17,9 @@ public class TextElementState
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Text { get; set; } = string.Empty;
-    public string? DynamicType { get; set; } // "GregorianDate", "LunarDate", "DayOfWeek", "Api", or null/Custom
+    public string? DynamicType { get; set; } // "GregorianDate", "LunarDate", "DayOfWeek", "Api", "DataSource", or null/Custom
+    public string? DataSourceId { get; set; }
+
     public double X { get; set; }
     public double Y { get; set; }
     public double FontSize { get; set; } = 36;
@@ -65,6 +67,7 @@ public class TextElementState
             Id = Guid.NewGuid(),
             Text = this.Text,
             DynamicType = this.DynamicType,
+            DataSourceId = this.DataSourceId,
             X = this.X + 20,
             Y = this.Y + 20,
             FontSize = this.FontSize,
@@ -75,6 +78,8 @@ public class TextElementState
             Underline = this.Underline,
             Alignment = this.Alignment,
             ZIndex = this.ZIndex + 1,
+            IsLocked = this.IsLocked,
+            IsVisible = this.IsVisible,
             ShadowEnabled = this.ShadowEnabled,
             ShadowColor = this.ShadowColor,
             ShadowOpacity = this.ShadowOpacity,

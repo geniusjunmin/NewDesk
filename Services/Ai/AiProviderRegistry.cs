@@ -10,6 +10,7 @@ namespace NewDesk.Services.Ai;
 public static class AiProviderRegistry
 {
     private static List<AiProviderConfig> _providers = new();
+    private static bool _isLoaded;
 
     public static IReadOnlyList<AiProviderConfig> GetAllProviders()
     {
@@ -64,7 +65,8 @@ public static class AiProviderRegistry
 
     private static void EnsureLoaded()
     {
-        if (_providers.Count > 0) return;
+        if (_isLoaded) return;
+        _isLoaded = true;
 
         try
         {
@@ -72,7 +74,7 @@ public static class AiProviderRegistry
             if (File.Exists(path))
             {
                 string json = File.ReadAllText(path);
-                _providers = JsonSerializer.Deserialize<List<AiProviderConfig>>(json) ?? GetDefaultPresets();
+                _providers = JsonSerializer.Deserialize<List<AiProviderConfig>>(json) ?? new List<AiProviderConfig>();
             }
             else
             {
@@ -111,8 +113,8 @@ public static class AiProviderRegistry
                 BaseUrl = "https://api.openai.com/v1",
                 Protocol = AiApiProtocol.Responses,
                 SelectedModel = "gpt-4o",
-                IsDefault = true,
-                IsEnabled = true
+                IsDefault = false,
+                IsEnabled = false
             },
             new AiProviderConfig
             {
@@ -122,7 +124,8 @@ public static class AiProviderRegistry
                 BaseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/",
                 Protocol = AiApiProtocol.ChatCompletions,
                 SelectedModel = "gemini-2.0-flash",
-                IsEnabled = true
+                IsDefault = false,
+                IsEnabled = false
             },
             new AiProviderConfig
             {
@@ -132,7 +135,8 @@ public static class AiProviderRegistry
                 BaseUrl = "https://api.x.ai/v1",
                 Protocol = AiApiProtocol.Responses,
                 SelectedModel = "grok-2-latest",
-                IsEnabled = true
+                IsDefault = false,
+                IsEnabled = false
             },
             new AiProviderConfig
             {
@@ -142,7 +146,8 @@ public static class AiProviderRegistry
                 BaseUrl = "https://api.minimax.io/v1",
                 Protocol = AiApiProtocol.ChatCompletions,
                 SelectedModel = "abab6.5s-chat",
-                IsEnabled = true
+                IsDefault = false,
+                IsEnabled = false
             },
             new AiProviderConfig
             {
@@ -152,7 +157,8 @@ public static class AiProviderRegistry
                 BaseUrl = "https://api.deepseek.com",
                 Protocol = AiApiProtocol.ChatCompletions,
                 SelectedModel = "deepseek-chat",
-                IsEnabled = true
+                IsDefault = false,
+                IsEnabled = false
             },
             new AiProviderConfig
             {
@@ -162,27 +168,8 @@ public static class AiProviderRegistry
                 BaseUrl = "https://api.anthropic.com/v1",
                 Protocol = AiApiProtocol.AnthropicMessages,
                 SelectedModel = "claude-3-5-sonnet-20241022",
-                IsEnabled = true
-            },
-            new AiProviderConfig
-            {
-                ProviderId = "preset_ollama",
-                Kind = AiProviderKind.Ollama,
-                Name = "Ollama (Local)",
-                BaseUrl = "http://localhost:11434/v1",
-                Protocol = AiApiProtocol.ChatCompletions,
-                SelectedModel = "llama3:latest",
-                IsEnabled = true
-            },
-            new AiProviderConfig
-            {
-                ProviderId = "preset_lmstudio",
-                Kind = AiProviderKind.LMStudio,
-                Name = "LM Studio (Local)",
-                BaseUrl = "http://localhost:1234/v1",
-                Protocol = AiApiProtocol.Auto,
-                SelectedModel = "local-model",
-                IsEnabled = true
+                IsDefault = false,
+                IsEnabled = false
             }
         };
     }

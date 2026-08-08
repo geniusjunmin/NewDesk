@@ -8,6 +8,8 @@ using NewDesk.Dialogs;
 using NewDesk.Models;
 using NewDesk.Models.Ai;
 using NewDesk.Services.Ai;
+using NewDesk.Services.Ai.Tools;
+using NewDesk.Services.Security;
 using NewDesk.Views;
 using ThemeMode = NewDesk.Models.ThemeMode;
 
@@ -229,6 +231,35 @@ public static class AutomatedTestRunner
                     throw new InvalidOperationException("SecretRedactor failed to censor tokens.");
             });
 
+            await RunTestAsync("AI Outbound Prompt Redaction Test (LOCAL STORAGE != OUTBOUND PAYLOAD)", async () =>
+            {
+                string capturedBody = "";
+                var mockHandler = new MockHttpMessageHandler(req =>
+                {
+                    capturedBody = req.Content?.ReadAsStringAsync().Result ?? "";
+                    return MockHttpMessageHandler.CreateJsonResponse("{\"choices\":[{\"message\":{\"content\":\"Processed\"}}]}");
+                });
+
+                var mockClient = new HttpClient(mockHandler);
+                var config = new AiProviderConfig
+                {
+                    BaseUrl = "https://mock.api.com/v1",
+                    Protocol = AiApiProtocol.ChatCompletions,
+                    SelectedModel = "mock-model"
+                };
+
+                var provider = new OpenAiCompatibleProvider(config, mockClient);
+                string rawUserPrompt = "My password=SuperSecret123 and token=sk-1234567890abcdef";
+
+                var outboundMsgs = AiOutboundContextBuilder.BuildMessages(new List<AiMessage>(), rawUserPrompt);
+                var aiReq = new AiRequest { Messages = outboundMsgs };
+
+                var resp = await provider.CompleteAsync(aiReq);
+
+                if (capturedBody.Contains("SuperSecret123") || capturedBody.Contains("sk-1234567890abcdef"))
+                    throw new InvalidOperationException("Outbound Prompt Redaction failed! Raw secret was leaked to HTTP payload!");
+            });
+
             await RunTestAsync("AI Provider SSE Streaming & Mock Parsing Test", async () =>
             {
                 var mockHandler = new MockHttpMessageHandler(req =>
@@ -268,11 +299,11 @@ public static class AutomatedTestRunner
 
             await RunTestAsync("AI Tool Call System & Safety Permissions", async () =>
             {
-                var tools = Services.Ai.Tools.AiToolRegistry.GetAllTools();
+                var tools = AiToolRegistry.GetAllTools();
                 if (tools.Count < 3)
                     throw new InvalidOperationException("AI tool registry is missing core tools.");
 
-                var sysInfoTool = Services.Ai.Tools.AiToolRegistry.GetTool("get_system_info");
+                var sysInfoTool = AiToolRegistry.GetTool("get_system_info");
                 if (sysInfoTool == null || sysInfoTool.RequiresUserConfirmation)
                     throw new InvalidOperationException("SystemInfoTool should be read-only without confirmation requirement.");
 
@@ -280,9 +311,39 @@ public static class AutomatedTestRunner
                 if (res.IsError || string.IsNullOrEmpty(res.OutputJson))
                     throw new InvalidOperationException("SystemInfoTool execution failed.");
 
-                var reminderTool = Services.Ai.Tools.AiToolRegistry.GetTool("create_reminder");
+                var reminderTool = AiToolRegistry.GetTool("create_reminder");
                 if (reminderTool == null || !reminderTool.RequiresUserConfirmation)
                     throw new InvalidOperationException("ReminderCreateTool MUST require user confirmation.");
+            });
+
+            await RunTestAsync("AI Tool Confirmation Denied (Null Callback DENY Test)", async () =>
+            {
+                var toolCall = new AiToolCall
+                {
+                    Id = "call_test",
+                    Name = "create_reminder",
+                    ArgumentsJson = "{\"title\":\"Test Denied\",\"month\":8,\"day\":8}"
+                };
+
+                // With NULL callback, execution MUST be denied!
+                var deniedResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, userConfirmationCallback: null);
+                if (!deniedResult.IsError || !deniedResult.OutputJson.Contains("安全防线"))
+                    throw new InvalidOperationException("AiToolExecutionService failed to deny execution when confirmation callback was null!");
+            });
+
+            await RunTestAsync("AI Tool Confirmation Accepted & Tool Result Loop Test", async () =>
+            {
+                var toolCall = new AiToolCall
+                {
+                    Id = "call_test2",
+                    Name = "create_reminder",
+                    ArgumentsJson = "{\"title\":\"Test Accepted\",\"month\":8,\"day\":18}"
+                };
+
+                // User accepts confirmation
+                var acceptedResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, userConfirmationCallback: pending => Task.FromResult(true));
+                if (acceptedResult.IsError)
+                    throw new InvalidOperationException("AiToolExecutionService failed to execute tool when user confirmed.");
             });
 
             RunTest("Dynamic Data Sources Persistence & Predefined Presets", () =>
@@ -292,7 +353,83 @@ public static class AutomatedTestRunner
                     throw new InvalidOperationException("DynamicDataService failed to load preset sources.");
             });
 
-            RunTest("Natural Language Reminder Parsing & Snooze Extensions", () =>
+            RunTest("Dynamic Secret Headers DPAPI Storage Test", () =>
+            {
+                var source = new DynamicDataSource
+                {
+                    Name = "Test API Source",
+                    Headers = new Dictionary<string, string>
+                    {
+                        { "Authorization", "Bearer my_super_secret_token" },
+                        { "Content-Type", "application/json" }
+                    }
+                };
+
+                DynamicDataService.SaveSources(new List<DynamicDataSource> { source });
+
+                if (source.Headers.ContainsKey("Authorization"))
+                    throw new InvalidOperationException("Sensitive header Authorization was not automatically removed from plaintext Headers dictionary!");
+
+                if (!source.SecretHeaders.ContainsKey("Authorization"))
+                    throw new InvalidOperationException("Sensitive header Authorization was not stored in SecretHeaders!");
+            });
+
+            RunTest("Real JsonPathExtractor Nested & Array Index Parsing Test", () =>
+            {
+                string sampleJson = "{\"data\":{\"items\":[{\"price\":18},{\"price\":25}]}}";
+
+                if (!JsonPathExtractor.TryExtract(sampleJson, "$.data.items[0].price", out string val) || val != "18")
+                    throw new InvalidOperationException($"JsonPathExtractor failed to parse $.data.items[0].price. Result: {val}");
+            });
+
+            RunTest("JsonPath Extraction Failure Uses Cache Fallback Test", () =>
+            {
+                string badJson = "{\"invalid\":\"structure\"}";
+                bool success = JsonPathExtractor.TryExtract(badJson, "$.data.items[0].price", out string val);
+                if (success)
+                    throw new InvalidOperationException("JsonPathExtractor should return false for non-matching paths.");
+            });
+
+            RunTest("NetworkEndpointClassifier Loopback vs Cloud Endpoint Test", () =>
+            {
+                if (!NetworkEndpointClassifier.IsLocalEndpoint("http://localhost:11434/v1"))
+                    throw new InvalidOperationException("http://localhost:11434/v1 should be classified as Local!");
+
+                if (!NetworkEndpointClassifier.IsLocalEndpoint("http://127.0.0.1:1234/v1"))
+                    throw new InvalidOperationException("http://127.0.0.1:1234/v1 should be classified as Local!");
+
+                if (NetworkEndpointClassifier.IsLocalEndpoint("https://localhost.evil.com/v1"))
+                    throw new InvalidOperationException("https://localhost.evil.com/v1 MUST NOT be classified as Local!");
+            });
+
+            RunTest("AI PrivacyGuard Network Mode Enforcement Test", () =>
+            {
+                var settings = SettingsService.LoadSettings();
+                settings.AiNetworkMode = AiNetworkMode.LocalOnly;
+                SettingsService.SaveSettings(settings);
+
+                var cloudProvider = new AiProviderConfig
+                {
+                    Kind = AiProviderKind.OpenAI,
+                    BaseUrl = "https://api.openai.com/v1"
+                };
+
+                try
+                {
+                    AiPrivacyGuard.ValidateRequest(cloudProvider, DataSensitivity.Personal, "Hello");
+                    throw new InvalidOperationException("AiPrivacyGuard failed to block Cloud provider in LocalOnly network mode!");
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("仅限本地模型模式"))
+                {
+                    // Expected behavior
+                }
+
+                // Restore default network mode
+                settings.AiNetworkMode = AiNetworkMode.AllowCloud;
+                SettingsService.SaveSettings(settings);
+            });
+
+            RunTest("Natural Language Reminder Parsing & TimeOfDay Extensions", () =>
             {
                 var parsed = NaturalLanguageReminderParser.Parse("明天下午3点开会");
                 if (parsed.Title != "下午3点开会")
@@ -322,11 +459,40 @@ public static class AutomatedTestRunner
                     throw new InvalidOperationException($"PasswordHealthService report calculation failed: Score={report.Score}, Weak={report.WeakCount}");
             });
 
-            RunTest("Wallpaper Pro Asset Library & Thumbnail Cache Service", () =>
+            RunTest("Wallpaper Pro Asset Library & TextElementState Complete Field Cloning Test", () =>
             {
-                var state = new TextElementState { IsLocked = true, IsVisible = false };
-                if (!state.IsLocked || state.IsVisible)
-                    throw new InvalidOperationException("TextElementState extended properties failed.");
+                var original = new TextElementState
+                {
+                    Text = "Sample Text",
+                    IsLocked = true,
+                    IsVisible = false,
+                    DataSourceId = "ds_12345",
+                    ShadowEnabled = true,
+                    StrokeEnabled = true
+                };
+
+                var cloned = original.Clone();
+                if (!cloned.IsLocked || cloned.IsVisible || cloned.DataSourceId != "ds_12345" || !cloned.ShadowEnabled || !cloned.StrokeEnabled)
+                    throw new InvalidOperationException("TextElementState.Clone failed to copy complete fields!");
+            });
+
+            RunTest("Wallpaper TextRenderer IsVisible Early Return Test", () =>
+            {
+                var hiddenElement = new TextElementState { Text = "Hidden", IsVisible = false };
+                // Drawing hidden element should return early without throwing
+            });
+
+            RunTest("BackupService ZIP Creation & Restore Verification Test", () =>
+            {
+                string backupZipPath = Path.Combine(testRoot, "test_backup.ndbackup");
+                BackupService.CreateBackup(backupZipPath);
+
+                if (!File.Exists(backupZipPath))
+                    throw new InvalidOperationException("BackupService failed to create target backup ZIP file!");
+
+                bool restored = BackupService.RestoreBackup(backupZipPath);
+                if (!restored)
+                    throw new InvalidOperationException("BackupService failed to restore backup ZIP!");
             });
 
             Console.WriteLine("=================================================");

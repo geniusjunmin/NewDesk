@@ -30,6 +30,8 @@ public enum AiTaskProfile
 
 public static class AiOrchestrator
 {
+    private const int MaxToolRounds = 4;
+
     public static async Task<AiResponse> ExecuteTurnAsync(
         AiTurnRequest turnRequest,
         IProgress<AiStreamChunk>? progress = null,
@@ -54,38 +56,79 @@ public static class AiOrchestrator
 
         var provider = AiProviderFactory.CreateProvider(providerConfig);
 
-        var messages = new List<AiMessage>(turnRequest.ConversationHistory);
-        if (messages.Count == 0 || messages[^1].Role != "user")
-        {
-            messages.Add(new AiMessage { Role = "user", Content = sanitizedPrompt });
-        }
+        // 4. Build Outbound Messages Payload with Redaction
+        var outboundMessages = AiOutboundContextBuilder.BuildMessages(turnRequest.ConversationHistory, turnRequest.UserPrompt);
 
-        var aiRequest = new AiRequest
-        {
-            Model = providerConfig.SelectedModel,
-            Messages = messages,
-            SystemPrompt = systemPrompt,
-            Stream = providerConfig.Streaming && progress != null,
-            Tools = AiToolRegistry.GetToolDefinitions()
-        };
+        var toolDefs = provider.Capabilities.SupportsTools ? AiToolRegistry.GetToolDefinitions() : null;
 
-        // 4. Stream or Complete Execution
-        if (aiRequest.Stream && progress != null)
+        int currentRound = 0;
+        AiResponse finalResponse = new();
+
+        while (currentRound < MaxToolRounds)
         {
-            var fullResponse = new AiResponse();
-            await foreach (var chunk in provider.StreamAsync(aiRequest, cancellationToken))
+            currentRound++;
+
+            var aiRequest = new AiRequest
             {
-                if (!string.IsNullOrEmpty(chunk.TextDelta))
+                Model = providerConfig.SelectedModel,
+                Messages = outboundMessages,
+                SystemPrompt = systemPrompt,
+                Stream = providerConfig.Streaming && progress != null && currentRound == 1,
+                Tools = toolDefs
+            };
+
+            AiResponse roundResponse;
+            if (aiRequest.Stream && progress != null)
+            {
+                roundResponse = new AiResponse();
+                await foreach (var chunk in provider.StreamAsync(aiRequest, cancellationToken))
                 {
-                    fullResponse.Content += chunk.TextDelta;
+                    if (!string.IsNullOrEmpty(chunk.TextDelta))
+                    {
+                        roundResponse.Content += chunk.TextDelta;
+                    }
+                    if (chunk.ToolCalls != null && chunk.ToolCalls.Count > 0)
+                    {
+                        roundResponse.ToolCalls.AddRange(chunk.ToolCalls);
+                    }
+                    progress.Report(chunk);
                 }
-                progress.Report(chunk);
             }
-            return fullResponse;
+            else
+            {
+                roundResponse = await provider.CompleteAsync(aiRequest, cancellationToken);
+            }
+
+            finalResponse = roundResponse;
+
+            // Check if model requested tool execution
+            if (roundResponse.ToolCalls == null || roundResponse.ToolCalls.Count == 0)
+            {
+                return finalResponse;
+            }
+
+            // Execute requested tools and append to conversation history for next round
+            outboundMessages.Add(new AiMessage
+            {
+                Role = "assistant",
+                Content = roundResponse.Content,
+                ToolCalls = roundResponse.ToolCalls
+            });
+
+            foreach (var toolCall in roundResponse.ToolCalls)
+            {
+                var toolResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, turnRequest.ConfirmationCallback);
+                outboundMessages.Add(new AiMessage
+                {
+                    Role = "tool",
+                    ToolCallId = toolCall.Id,
+                    Content = toolResult.OutputJson
+                });
+            }
         }
-        else
-        {
-            return await provider.CompleteAsync(aiRequest, cancellationToken);
-        }
+
+        AppDataPath.LogInfo($"AiOrchestrator Tool Loop reached maximum safe rounds limit ({MaxToolRounds}).");
+        finalResponse.Content += "\n[系统提示: AI 工具调用轮次已达到安全限制]";
+        return finalResponse;
     }
 }

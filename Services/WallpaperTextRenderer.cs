@@ -17,6 +17,8 @@ public static class WallpaperTextRenderer
         double offsetX = 0,
         double offsetY = 0)
     {
+        if (!element.IsVisible) return;
+
         string textToRender = element.Text;
         if (element.DynamicType == "GregorianDate") textToRender = GetGregorianDateString(element.DateFormat);
         else if (element.DynamicType == "LunarDate") textToRender = "农历 八月十五";

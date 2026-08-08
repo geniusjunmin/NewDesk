@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Windows.Forms;
+using System.Windows.Input;
 using System.Windows.Interop;
 
 namespace NewDesk.Services;
@@ -30,21 +30,33 @@ public static class MultiGlobalHotkeyService
         _hwndSource?.AddHook(HwndHook);
     }
 
-    public static bool RegisterHotkey(string name, uint modifiers, uint key, Action action)
+    public static void UnregisterAll()
+    {
+        if (_hwndSource == null) return;
+        IntPtr handle = _hwndSource.Handle;
+
+        foreach (var kvp in Hotkeys)
+        {
+            NativeMethods.UnregisterHotKey(handle, kvp.Key);
+        }
+        Hotkeys.Clear();
+    }
+
+    public static bool RegisterHotkey(string name, uint modifiers, uint vk, Action action)
     {
         if (_hwndSource == null) return false;
 
         int id = _nextId++;
         IntPtr handle = _hwndSource.Handle;
 
-        bool success = NativeMethods.RegisterHotKey(handle, id, modifiers, key);
+        bool success = NativeMethods.RegisterHotKey(handle, id, modifiers, vk);
         if (success)
         {
             Hotkeys[id] = new HotkeyRegistrationInfo
             {
                 Id = id,
                 Modifiers = modifiers,
-                Key = key,
+                Key = vk,
                 Name = name,
                 Action = action
             };

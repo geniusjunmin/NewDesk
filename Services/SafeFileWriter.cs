@@ -22,7 +22,7 @@ public static class SafeFileWriter
             {
                 writer.Write(content);
                 writer.Flush();
-                fs.Flush(true); // Ensure disk flush
+                fs.Flush(true);
             }
 
             if (File.Exists(filePath))
@@ -37,8 +37,47 @@ public static class SafeFileWriter
         catch (Exception ex)
         {
             AppDataPath.LogError($"SafeFileWriter.WriteAllText ({filePath})", ex);
-            // Fallback direct write if replace fails
             File.WriteAllText(filePath, content, Encoding.UTF8);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                try { File.Delete(tempFilePath); } catch { }
+            }
+        }
+    }
+
+    public static void WriteAllBytes(string filePath, byte[] data)
+    {
+        string directory = Path.GetDirectoryName(filePath)!;
+        if (!Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        string tempFilePath = filePath + ".tmp";
+        try
+        {
+            using (var fs = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                fs.Write(data, 0, data.Length);
+                fs.Flush(true);
+            }
+
+            if (File.Exists(filePath))
+            {
+                File.Replace(tempFilePath, filePath, null);
+            }
+            else
+            {
+                File.Move(tempFilePath, filePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppDataPath.LogError($"SafeFileWriter.WriteAllBytes ({filePath})", ex);
+            File.WriteAllBytes(filePath, data);
         }
         finally
         {

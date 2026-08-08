@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
@@ -10,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NewDesk.Models.Ai;
+using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
 
@@ -41,12 +43,12 @@ public class ResponsesApiProvider : IAiProvider
 
     private void ApplyHeaders(HttpRequestMessage request)
     {
-        string? secret = AiSecretStorageService.GetSecret(Config.SecretId);
+        string? secret = SecretStorageService.GetSecret(Config.SecretId);
         if (!string.IsNullOrEmpty(secret))
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
         }
-        request.Headers.UserAgent.ParseAdd("NewDesk/2.0");
+        request.Headers.UserAgent.ParseAdd("NewDesk/2.2");
     }
 
     public async Task<AiConnectionResult> TestConnectionAsync(CancellationToken cancellationToken = default)
@@ -109,19 +111,7 @@ public class ResponsesApiProvider : IAiProvider
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         ApplyHeaders(req);
 
-        var input = new List<object>();
-        foreach (var msg in request.Messages)
-        {
-            input.Add(new { role = msg.Role, content = msg.Content });
-        }
-
-        var bodyObj = new
-        {
-            model = string.IsNullOrEmpty(request.Model) ? Config.SelectedModel : request.Model,
-            input = input,
-            stream = false
-        };
-
+        var bodyObj = BuildRequestBody(request, stream: false);
         req.Content = new StringContent(JsonSerializer.Serialize(bodyObj), Encoding.UTF8, "application/json");
 
         using var resp = await _httpClient.SendAsync(req, cancellationToken);
@@ -132,15 +122,30 @@ public class ResponsesApiProvider : IAiProvider
         var root = doc.RootElement;
 
         string content = "";
+        List<AiToolCall>? toolCalls = null;
+
         if (root.TryGetProperty("output_text", out var outText))
         {
             content = outText.GetString() ?? "";
         }
 
+        if (root.TryGetProperty("function_call", out var fcElem) && fcElem.ValueKind == JsonValueKind.Object)
+        {
+            string callId = fcElem.TryGetProperty("call_id", out var cid) ? cid.GetString() ?? "" : "";
+            string name = fcElem.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+            string args = fcElem.TryGetProperty("arguments", out var a) ? a.GetString() ?? "{}" : "{}";
+
+            toolCalls = new List<AiToolCall>
+            {
+                new AiToolCall { Id = callId, Name = name, ArgumentsJson = args }
+            };
+        }
+
         return new AiResponse
         {
             Content = content,
-            Usage = new AiUsage()
+            Usage = new AiUsage(),
+            ToolCalls = toolCalls
         };
     }
 
@@ -150,19 +155,7 @@ public class ResponsesApiProvider : IAiProvider
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         ApplyHeaders(req);
 
-        var input = new List<object>();
-        foreach (var msg in request.Messages)
-        {
-            input.Add(new { role = msg.Role, content = msg.Content });
-        }
-
-        var bodyObj = new
-        {
-            model = string.IsNullOrEmpty(request.Model) ? Config.SelectedModel : request.Model,
-            input = input,
-            stream = true
-        };
-
+        var bodyObj = BuildRequestBody(request, stream: true);
         req.Content = new StringContent(JsonSerializer.Serialize(bodyObj), Encoding.UTF8, "application/json");
 
         using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -209,5 +202,57 @@ public class ResponsesApiProvider : IAiProvider
                 }
             }
         }
+    }
+
+    private object BuildRequestBody(AiRequest request, bool stream)
+    {
+        var input = new List<object>();
+
+        foreach (var msg in request.Messages)
+        {
+            if (msg.Role == "tool")
+            {
+                input.Add(new
+                {
+                    type = "function_call_output",
+                    call_id = msg.ToolCallId ?? "",
+                    output = msg.Content
+                });
+            }
+            else if (msg.Role == "assistant" && msg.ToolCalls != null && msg.ToolCalls.Count > 0)
+            {
+                var firstTool = msg.ToolCalls[0];
+                input.Add(new
+                {
+                    type = "function_call",
+                    call_id = firstTool.Id,
+                    name = firstTool.Name,
+                    arguments = firstTool.ArgumentsJson
+                });
+            }
+            else
+            {
+                input.Add(new { role = msg.Role, content = msg.Content });
+            }
+        }
+
+        var reqBody = new Dictionary<string, object>
+        {
+            ["model"] = string.IsNullOrEmpty(request.Model) ? Config.SelectedModel : request.Model,
+            ["input"] = input,
+            ["stream"] = stream
+        };
+
+        if (!string.IsNullOrEmpty(request.SystemPrompt))
+        {
+            reqBody["instructions"] = request.SystemPrompt;
+        }
+
+        if (request.Tools != null && request.Tools.Count > 0)
+        {
+            reqBody["tools"] = request.Tools;
+        }
+
+        return reqBody;
     }
 }
