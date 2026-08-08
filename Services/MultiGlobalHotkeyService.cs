@@ -70,52 +70,6 @@ public static class MultiGlobalHotkeyService
         return success;
     }
 
-    public static bool TryRebindHotkeyTransactional(
-        string name,
-        HotkeyBinding newBinding,
-        HotkeyBinding oldBinding,
-        Action action,
-        out string errorMessage)
-    {
-        errorMessage = string.Empty;
-        if (_hwndSource == null)
-        {
-            errorMessage = "快捷键服务尚未初始化。";
-            return false;
-        }
-
-        uint newVk = (uint)KeyInterop.VirtualKeyFromKey(newBinding.Key);
-        uint oldVk = (uint)KeyInterop.VirtualKeyFromKey(oldBinding.Key);
-
-        // Unregister existing hotkey for this name if any
-        int existingId = -1;
-        foreach (var kvp in Hotkeys)
-        {
-            if (kvp.Value.Name == name)
-            {
-                existingId = kvp.Key;
-                break;
-            }
-        }
-
-        if (existingId != -1)
-        {
-            NativeMethods.UnregisterHotKey(_hwndSource.Handle, existingId);
-            Hotkeys.Remove(existingId);
-        }
-
-        bool success = RegisterHotkey(name, newBinding.Modifiers, newVk, action);
-        if (!success)
-        {
-            // Rollback to old binding!
-            RegisterHotkey(name, oldBinding.Modifiers, oldVk, action);
-            errorMessage = $"快捷键 [{newBinding}] 注册失败，已被其他程序占用。已恢复为原快捷键 [{oldBinding}]。";
-            return false;
-        }
-
-        return true;
-    }
-
     private static IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         const int WM_HOTKEY = 0x0312;

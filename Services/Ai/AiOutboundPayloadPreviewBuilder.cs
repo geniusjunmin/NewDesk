@@ -58,6 +58,7 @@ public static class AiOutboundPayloadPreviewBuilder
             IncludesWallpaperContext = actualCategories.HasFlag(AiDataCategory.Wallpaper),
             IncludesDynamicDataContext = actualCategories.HasFlag(AiDataCategory.DynamicData),
             IncludesClipboard = actualCategories.HasFlag(AiDataCategory.Clipboard),
+            IncludesSystemInfo = actualCategories.HasFlag(AiDataCategory.SystemInfo),
             SanitizedPreview = sb.ToString()
         };
     }

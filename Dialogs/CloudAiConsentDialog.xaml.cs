@@ -34,6 +34,10 @@ public partial class CloudAiConsentDialog : Window
         {
             PanelContextItems.Children.Add(CreateContextItem("✓ 剪贴板内容"));
         }
+        if (preview.IncludesSystemInfo)
+        {
+            PanelContextItems.Children.Add(CreateContextItem("✓ 系统设备信息（OS、MachineName、ProcessorCount、.NET Version）"));
+        }
     }
 
     private TextBlock CreateContextItem(string text)

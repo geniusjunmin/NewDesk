@@ -162,7 +162,7 @@ public partial class ReminderEditorWindow : Window
                 return;
             }
 
-            if (!TimeSpan.TryParse(DueTimeTextBox.Text.Trim(), out var timeSpan))
+            if (!ReminderTimeParser.TryParseClockTime(DueTimeTextBox.Text, out var timeSpan))
             {
                 ToastManager.Show("提示", "请输入有效的时间格式 (例: 09:00)！", ToastType.Warning);
                 return;
@@ -195,7 +195,7 @@ public partial class ReminderEditorWindow : Window
                 return;
             }
 
-            if (!TimeSpan.TryParse(YearlyTimeTextBox.Text.Trim(), out var timeSpan))
+            if (!ReminderTimeParser.TryParseClockTime(YearlyTimeTextBox.Text, out var timeSpan))
             {
                 ToastManager.Show("提示", "请输入有效的时间格式 (例: 09:00)！", ToastType.Warning);
                 return;

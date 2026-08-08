@@ -12,6 +12,38 @@
                 </StackPanel>
             </Grid>
 
+            <Border Style="{StaticResource CardStyle}" Padding="16" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <TextBlock Text="数据源管理" Style="{StaticResource Header2TextStyle}"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="+ New" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" Click="NewSourceButton_Click"/>
+                            <Button Content="Delete" Style="{StaticResource DangerButton}" Click="DeleteSourceButton_Click"/>
+                        </StackPanel>
+                    </Grid>
+                    <ListBox x:Name="SourceListBox" Height="150" SelectionChanged="SourceListBox_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="160"/>
+                                        <ColumnDefinition Width="70"/>
+                                        <ColumnDefinition Width="140"/>
+                                        <ColumnDefinition Width="140"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Type}"/>
+                                    <TextBlock Grid.Column="2" Text="{Binding LastCachedValue}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Column="3" Text="{Binding LastSuccessfulTime, StringFormat={}{0:g}}"/>
+                                    <TextBlock Grid.Column="4" Text="{Binding LastError}" Foreground="{DynamicResource DangerBrush}" TextTrimming="CharacterEllipsis"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </StackPanel>
+            </Border>
+
             <!-- Preset Cards Selection -->
             <Border Style="{StaticResource CardStyle}" Padding="20">
                 <StackPanel>
@@ -85,10 +117,19 @@
             <Border Style="{StaticResource CardStyle}" Padding="12" Margin="0,0,0,16">
                 <Expander Header="⚙ 高级 API 设置 (Regex &amp; 提取规则)" IsExpanded="False">
                     <StackPanel Margin="8,12,8,8">
+                        <TextBlock Text="数据源名称：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                        <TextBox x:Name="SourceNameTextBox" Margin="0,0,0,12"/>
                         <TextBlock Text="API URL 接口地址：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
                         <TextBox x:Name="ApiUrlTextBox" Text="https://wttr.in/Beijing?format=j1" Margin="0,0,0,12"/>
 
-                        <TextBlock Text="正则表达式 (Regex Extraction Rule)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                        <TextBlock Text="提取类型：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
+                        <ComboBox x:Name="ExtractionTypeComboBox" SelectedIndex="0" Margin="0,0,0,12">
+                            <ComboBoxItem Content="JSONPath" Tag="JsonPath"/>
+                            <ComboBoxItem Content="Regex" Tag="Regex"/>
+                            <ComboBoxItem Content="Raw" Tag="Raw"/>
+                        </ComboBox>
+
+                        <TextBlock Text="提取规则：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>
                         <TextBox x:Name="ApiRegexTextBox" Text="&quot;temp_C&quot;:\s*&quot;(\d+)&quot;" Margin="0,0,0,12"/>
 
                         <TextBlock Text="前缀 (Prefix)：" Style="{StaticResource BodyTextStyle}" Margin="0,0,0,4"/>

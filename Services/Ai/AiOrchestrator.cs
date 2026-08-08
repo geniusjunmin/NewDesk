@@ -31,6 +31,8 @@ public class AiTurnRequest
     public Func<PendingToolAction, Task<bool>>? ConfirmationCallback { get; set; }
     public Func<CloudSendPreview, Task<bool>>? CloudConsentCallback { get; set; }
     public IProgress<ToolExecutionDisplayInfo>? ToolExecutionProgress { get; set; }
+    public bool EnableTools { get; set; } = false;
+    public HashSet<string> AllowedToolNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public enum AiTaskProfile
@@ -133,7 +135,7 @@ public static class AiOrchestrator
         }
 
         var provider = AiProviderFactory.CreateProvider(providerConfig);
-        var toolDefs = provider.Capabilities.SupportsTools ? AiToolRegistry.GetToolDefinitions() : null;
+        var toolDefs = GetAllowedToolDefinitions(turnRequest, provider.Capabilities.SupportsTools);
 
         int currentRound = 0;
         AiResponse finalResponse = new();
@@ -148,7 +150,7 @@ public static class AiOrchestrator
                 Messages = outboundMessages,
                 SystemPrompt = systemPrompt,
                 Stream = providerConfig.Streaming && progress != null && currentRound == 1,
-                Tools = toolDefs ?? new List<AiToolDefinition>()
+                Tools = toolDefs
             };
 
             AiResponse roundResponse;
@@ -191,21 +193,44 @@ public static class AiOrchestrator
 
             foreach (var toolCall in roundResponse.ToolCalls)
             {
-                var validation = AiToolArgumentValidator.ValidateArguments(toolCall.Name, toolCall.ArgumentsJson);
                 AiToolResult toolResult;
-
-                if (!validation.IsValid)
+                if (!IsToolAllowed(turnRequest, toolCall.Name))
                 {
                     toolResult = new AiToolResult
                     {
                         ToolCallId = toolCall.Id,
                         IsError = true,
-                        OutputJson = JsonSerializer.Serialize(new { success = false, error = $"工具参数校验失败: {validation.ErrorMessage}" })
+                        OutputJson = JsonSerializer.Serialize(new { success = false, error = "tool_not_allowed" })
                     };
                 }
                 else
                 {
-                    toolResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, turnRequest.ConfirmationCallback);
+                    var validation = AiToolArgumentValidator.ValidateArguments(toolCall.Name, toolCall.ArgumentsJson);
+                    if (!validation.IsValid)
+                    {
+                        toolResult = new AiToolResult
+                        {
+                            ToolCallId = toolCall.Id,
+                            IsError = true,
+                            OutputJson = JsonSerializer.Serialize(new { success = false, error = $"工具参数校验失败: {validation.ErrorMessage}" })
+                        };
+                    }
+                    else if (toolCall.Name.Equals("get_system_info", StringComparison.OrdinalIgnoreCase))
+                    {
+                        toolResult = await ExecuteSystemInfoToolAsync(
+                            toolCall,
+                            turnRequest,
+                            providerConfig,
+                            isLocal,
+                            actualCategories,
+                            systemPrompt,
+                            outboundMessages,
+                            sanitizedPrompt);
+                    }
+                    else
+                    {
+                        toolResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, turnRequest.ConfirmationCallback);
+                    }
                 }
 
                 // Report ToolExecutionDisplayInfo to UI progress
@@ -227,5 +252,71 @@ public static class AiOrchestrator
         finalResponse.Content += "\n[系统提示: AI 工具调用轮次已达到安全限制]";
         finalResponse.ToolRounds = MaxToolRounds;
         return finalResponse;
+    }
+
+    internal static List<AiToolDefinition> GetAllowedToolDefinitions(AiTurnRequest request, bool providerSupportsTools)
+    {
+        return request.EnableTools && providerSupportsTools
+            ? AiToolRegistry.GetToolDefinitions(request.AllowedToolNames)
+            : [];
+    }
+
+    internal static bool IsToolAllowed(AiTurnRequest request, string toolName)
+    {
+        return request.EnableTools && request.AllowedToolNames.Contains(toolName);
+    }
+
+    internal static async Task<AiToolResult> ExecuteSystemInfoToolAsync(
+        AiToolCall toolCall,
+        AiTurnRequest turnRequest,
+        AiProviderConfig providerConfig,
+        bool isLocal,
+        AiDataCategory actualCategories,
+        string systemPrompt,
+        List<AiMessage> outboundMessages,
+        string sanitizedPrompt)
+    {
+        var settings = SettingsService.LoadSettings();
+        if (!settings.AllowAiSystemInfo)
+        {
+            return ToolError(toolCall, "system_info_not_allowed");
+        }
+
+        if (!isLocal)
+        {
+            if (turnRequest.CloudConsentCallback == null)
+            {
+                return ToolError(toolCall, "system_info_cloud_consent_required");
+            }
+
+            string host = "cloud";
+            try { host = new Uri(providerConfig.BaseUrl).Host; } catch { }
+            var preview = AiOutboundPayloadPreviewBuilder.BuildPreview(
+                providerConfig.Name,
+                turnRequest.ModelOverride ?? providerConfig.SelectedModel,
+                host,
+                turnRequest.DataSensitivity,
+                actualCategories | AiDataCategory.SystemInfo,
+                systemPrompt,
+                outboundMessages,
+                "AI 请求读取并向云端发送系统设备信息：OS、MachineName、ProcessorCount、.NET Version。\n" + sanitizedPrompt);
+
+            if (!await turnRequest.CloudConsentCallback(preview))
+            {
+                return ToolError(toolCall, "system_info_cloud_consent_denied");
+            }
+        }
+
+        return await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, turnRequest.ConfirmationCallback);
+    }
+
+    private static AiToolResult ToolError(AiToolCall toolCall, string error)
+    {
+        return new AiToolResult
+        {
+            ToolCallId = toolCall.Id,
+            IsError = true,
+            OutputJson = JsonSerializer.Serialize(new { success = false, error })
+        };
     }
 }

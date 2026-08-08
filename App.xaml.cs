@@ -39,6 +39,10 @@ public partial class App : System.Windows.Application
             AppDataPath.LogError("App.OnStartup Migration Warning", new Exception($"Domains failed migration: {failed}"));
             ToastManager.Show("数据迁移警告", $"部分数据模块 ({failed}) 升级可能未完成，旧版本数据已安全备份。", ToastType.Warning);
         }
+        else if (!string.IsNullOrEmpty(MigrationService.LastRepairWarning))
+        {
+            ToastManager.Show("提醒迁移检查", MigrationService.LastRepairWarning, ToastType.Warning);
+        }
 
         // Ensure icon exists
         IconService.EnsureIconExists();

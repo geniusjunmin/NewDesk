@@ -23,7 +23,8 @@ public enum AiDataCategory
     DynamicData = 8,
     PasswordMetadata = 16,
     Logs = 32,
-    Clipboard = 64
+    Clipboard = 64,
+    SystemInfo = 128
 }
 
 public static class AiPrivacyGuard
@@ -74,6 +75,10 @@ public static class AiPrivacyGuard
         if (categories.HasFlag(AiDataCategory.Logs) && !settings.AllowAiLogAnalysis)
         {
             throw new InvalidOperationException("【隐私防护动效】当前未授权 AI 访问日志内容。");
+        }
+        if (categories.HasFlag(AiDataCategory.SystemInfo) && !settings.AllowAiSystemInfo)
+        {
+            throw new InvalidOperationException("【隐私防护动效】当前未授权 AI 访问系统设备信息。");
         }
     }
 }

@@ -12,17 +12,32 @@ public static class WallpaperTextRenderer
 {
     public static string GetRenderText(TextElementState element, List<DynamicDataSource>? sources = null)
     {
+        var values = sources?
+            .Where(source => !string.IsNullOrEmpty(source.LastCachedValue))
+            .ToDictionary(source => source.Id, source => source.LastCachedValue!, StringComparer.OrdinalIgnoreCase);
+        return ResolveElementText(element, new WallpaperRenderContext
+        {
+            DataSourceValues = values ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        });
+    }
+
+    public static string ResolveElementText(TextElementState element, WallpaperRenderContext? context)
+    {
         if (element.DynamicType == "GregorianDate") return GetGregorianDateString(element.DateFormat);
         if (element.DynamicType == "LunarDate") return GetLunarDateString();
         if (element.DynamicType == "DayOfWeek") return DateTime.Now.ToString("dddd", new CultureInfo("zh-CN"));
 
-        if ((element.DynamicType == "DataSource" || !string.IsNullOrEmpty(element.DataSourceId)) && sources != null)
+        if ((element.DynamicType == "DataSource" || !string.IsNullOrEmpty(element.DataSourceId)) &&
+            !string.IsNullOrEmpty(element.DataSourceId) &&
+            context?.DataSourceValues.TryGetValue(element.DataSourceId, out var dataSourceValue) == true)
         {
-            var src = sources.FirstOrDefault(s => s.Id == element.DataSourceId);
-            if (src != null && !string.IsNullOrEmpty(src.LastCachedValue))
-            {
-                return src.LastCachedValue;
-            }
+            return dataSourceValue;
+        }
+
+        if (element.DynamicType == "Api" &&
+            context?.LegacyApiValues.TryGetValue(element.Id, out var legacyApiValue) == true)
+        {
+            return legacyApiValue;
         }
 
         return element.Text;

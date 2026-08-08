@@ -84,4 +84,10 @@ public static class AiConversationService
     {
         AiConversationStore.SaveConversations(_conversations);
     }
+
+    internal static void ResetForTesting()
+    {
+        _conversations = new List<AiConversation>();
+        _isLoaded = false;
+    }
 }

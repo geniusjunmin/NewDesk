@@ -298,7 +298,7 @@
                             <Button Content="📅 公历日期" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" Click="AddGregorianDateButton_Click"/>
                             <Button Content="📅 农历日期" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" Click="AddLunarDateButton_Click"/>
                             <Button Content="📅 星期" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" Click="AddDayOfWeekButton_Click"/>
-                            <Button Content="🔗 API 数据" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" Click="AddApiDataButton_Click"/>
+                            <Button Content="🔗 动态数据" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" Click="AddApiDataButton_Click"/>
                             <Button Content="Aa 自定义文本" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" Click="AddCustomTextButton_Click"/>
                         </WrapPanel>
                     </Grid>
@@ -441,6 +441,40 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Text="{Binding Text}" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
                                         <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                            <Button Style="{StaticResource SecondaryButton}" Padding="4,2" FontSize="10" Margin="2,0" Click="ToggleLayerVisibility_Click" Tag="{Binding}">
+                                                <Button.Content>
+                                                    <TextBlock>
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="👁"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsVisible}" Value="False">
+                                                                        <Setter Property="Text" Value="🚫"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Button.Content>
+                                                <Button.ToolTip>显示/隐藏图层</Button.ToolTip>
+                                            </Button>
+                                            <Button Style="{StaticResource SecondaryButton}" Padding="4,2" FontSize="10" Margin="2,0" Click="ToggleLayerLock_Click" Tag="{Binding}">
+                                                <Button.Content>
+                                                    <TextBlock>
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="🔓"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                                                                        <Setter Property="Text" Value="🔒"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Button.Content>
+                                                <Button.ToolTip>锁定/解锁位置</Button.ToolTip>
+                                            </Button>
                                             <Button Content="▲" Style="{StaticResource SecondaryButton}" Padding="4,2" FontSize="10" Margin="2,0" Click="MoveLayerUp_Click" Tag="{Binding}"/>
                                             <Button Content="▼" Style="{StaticResource SecondaryButton}" Padding="4,2" FontSize="10" Margin="2,0" Click="MoveLayerDown_Click" Tag="{Binding}"/>
                                         </StackPanel>

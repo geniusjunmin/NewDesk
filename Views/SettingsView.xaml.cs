@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -78,6 +79,7 @@ public partial class SettingsView : UserControl
             AllowPasswordMetadataCheckBox.IsChecked = _settings.AllowAiPasswordMetadata;
             AllowLogsCheckBox.IsChecked = _settings.AllowAiLogAnalysis;
             AllowClipboardCheckBox.IsChecked = _settings.AllowAiClipboard;
+            AllowSystemInfoCheckBox.IsChecked = _settings.AllowAiSystemInfo;
             AllowBackgroundCloudCheckBox.IsChecked = _settings.AllowBackgroundCloudRequests;
 
             // Hotkey Bindings Display (Phase 17)
@@ -220,6 +222,7 @@ public partial class SettingsView : UserControl
         _settings.AllowAiPasswordMetadata = AllowPasswordMetadataCheckBox.IsChecked == true;
         _settings.AllowAiLogAnalysis = AllowLogsCheckBox.IsChecked == true;
         _settings.AllowAiClipboard = AllowClipboardCheckBox.IsChecked == true;
+        _settings.AllowAiSystemInfo = AllowSystemInfoCheckBox.IsChecked == true;
         _settings.AllowBackgroundCloudRequests = AllowBackgroundCloudCheckBox.IsChecked == true;
 
         SettingsService.SaveSettings(_settings);
@@ -254,37 +257,51 @@ public partial class SettingsView : UserControl
             if (dlg.ShowDialog() == true && dlg.CapturedBinding != null)
             {
                 var binding = dlg.CapturedBinding;
+                var candidate = CloneSettings(_settings);
                 switch (targetHotkey)
                 {
                     case "MainWindow":
-                        _settings.MainWindowHotkey = binding;
-                        TxtMainWindowHotkey.Text = binding.ToString();
+                        candidate.MainWindowHotkey = binding;
                         break;
                     case "AiQuick":
-                        _settings.AiQuickHotkey = binding;
-                        TxtAiQuickHotkey.Text = binding.ToString();
+                        candidate.AiQuickHotkey = binding;
                         break;
                     case "CommandPalette":
-                        _settings.CommandPaletteHotkey = binding;
-                        TxtCommandPaletteHotkey.Text = binding.ToString();
+                        candidate.CommandPaletteHotkey = binding;
                         break;
                     case "ClipboardAi":
-                        _settings.ClipboardAiHotkey = binding;
-                        TxtClipboardAiHotkey.Text = binding.ToString();
+                        candidate.ClipboardAiHotkey = binding;
                         break;
                 }
 
-                SettingsService.SaveSettings(_settings);
-
-                // Notify MainWindow to re-register hotkeys dynamically without app restart
-                if (Application.Current.MainWindow is MainWindow mw)
+                if (Application.Current.MainWindow is not MainWindow mw)
                 {
-                    mw.RegisterDynamicHotkeys();
+                    ToastManager.Show("快捷键保存失败", "主窗口不可用，快捷键设置未更改。", ToastType.Error);
+                    return;
                 }
 
+                var result = mw.TryApplyHotkeyConfiguration(candidate);
+                if (!result.Success)
+                {
+                    ToastManager.Show("快捷键保存失败", result.ErrorMessage, ToastType.Error);
+                    return;
+                }
+
+                _settings = candidate;
+                TxtMainWindowHotkey.Text = _settings.MainWindowHotkey.ToString();
+                TxtAiQuickHotkey.Text = _settings.AiQuickHotkey.ToString();
+                TxtCommandPaletteHotkey.Text = _settings.CommandPaletteHotkey.ToString();
+                TxtClipboardAiHotkey.Text = _settings.ClipboardAiHotkey.ToString();
                 ToastManager.Show("快捷键保存", "快捷键已实时重置生效！", ToastType.Success);
             }
         }
+    }
+
+    private static AppSettings CloneSettings(AppSettings settings)
+    {
+        string json = JsonSerializer.Serialize(settings);
+        return JsonSerializer.Deserialize<AppSettings>(json)
+            ?? throw new InvalidOperationException("无法创建快捷键设置候选副本。");
     }
 
     private void SendTestNotificationButton_Click(object sender, RoutedEventArgs e)

@@ -46,11 +46,12 @@ public static class AiConversationStore
                 byte[] plainBytes = Encoding.UTF8.GetBytes(json);
                 byte[] encryptedBytes = ProtectedData.Protect(plainBytes, null, DataProtectionScope.CurrentUser);
 
-                File.WriteAllBytes(AppDataPath.AiConversationsFile, encryptedBytes);
+                SafeFileWriter.WriteAllBytes(AppDataPath.AiConversationsFile, encryptedBytes);
             }
             catch (Exception ex)
             {
                 AppDataPath.LogError("AiConversationStore.SaveConversations", ex);
+                throw new IOException($"AI 对话保存失败: {ex.Message}", ex);
             }
         }
     }

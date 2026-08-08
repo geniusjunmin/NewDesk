@@ -107,7 +107,7 @@
                 <Border x:Name="EmptyStateBorder" Style="{StaticResource CardStyle}" VerticalAlignment="Center" HorizontalAlignment="Center" Width="360" Padding="32" Margin="0,40,0,0" Visibility="Collapsed">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock Text="🔔" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,12"/>
-                        <TextBlock Text="还没有设置提醒" Style="{StaticResource Header2TextStyle}" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                        <TextBlock Text="当前没有待处理提醒" Style="{StaticResource Header2TextStyle}" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                         <TextBlock Text="添加生日、纪念日或重要日程，定时推送到 Windows 通知。" Style="{StaticResource CaptionTextStyle}" HorizontalAlignment="Center" Margin="0,0,0,16"/>
                         <Button Content="创建第一个提醒" Style="{StaticResource ModernButton}" HorizontalAlignment="Center" Click="AddReminderButton_Click"/>
                     </StackPanel>

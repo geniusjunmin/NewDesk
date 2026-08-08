@@ -83,6 +83,7 @@ public partial class ClipboardAiWindow : Window
                     DataSensitivity = DataSensitivity.Sensitive,
                     DataCategories = AiDataCategory.UserPrompt | AiDataCategory.Clipboard,
                     RequestedContextCategories = AiDataCategory.None,
+                    EnableTools = false,
                     CloudConsentCallback = preview => CloudConsentService.ShowInteractiveConsentAsync(this, preview)
                 };
 

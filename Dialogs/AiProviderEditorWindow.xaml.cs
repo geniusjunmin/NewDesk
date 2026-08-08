@@ -14,6 +14,7 @@ public partial class AiProviderEditorWindow : Window
 {
     private readonly AiProviderConfig _config;
     private bool _isInitializing = true;
+    private bool _clearExistingSecret;
 
     public AiProviderConfig Config => _config;
 
@@ -80,6 +81,15 @@ public partial class AiProviderEditorWindow : Window
         }
     }
 
+    private void ClearApiKeyButton_Click(object sender, RoutedEventArgs e)
+    {
+        var confirm = new ConfirmDialog("清除 API Key", "确定删除该 AI 服务保存的 API Key 吗？", isDanger: true) { Owner = this };
+        if (confirm.ShowDialog() != true) return;
+        _clearExistingSecret = true;
+        ApiKeyPasswordBox.Password = string.Empty;
+        ApiKeyTextBox.Text = string.Empty;
+    }
+
     private void ValidateConfigBeforeAction(AiProviderConfig config, string apiKey, bool isSaving = false)
     {
         if (string.IsNullOrWhiteSpace(config.Name))
@@ -87,7 +97,8 @@ public partial class AiProviderEditorWindow : Window
             throw new InvalidOperationException("服务提供商名称不能为空。");
         }
 
-        EndpointSecurityPolicy.ValidateEndpoint(config.BaseUrl, !string.IsNullOrEmpty(apiKey));
+        bool transmitsSecret = !string.IsNullOrEmpty(apiKey) || (!_clearExistingSecret && !string.IsNullOrEmpty(config.SecretId));
+        EndpointSecurityPolicy.ValidateEndpoint(config.BaseUrl, transmitsSecret);
 
         if (isSaving && string.IsNullOrWhiteSpace(config.SelectedModel))
         {
@@ -256,18 +267,16 @@ public partial class AiProviderEditorWindow : Window
             return;
         }
 
-        if (string.IsNullOrEmpty(_config.SecretId))
+        try
         {
-            _config.SecretId = "secret_" + Guid.NewGuid().ToString("N");
+            AiProviderSecretPolicy.Apply(_config, key, _clearExistingSecret);
+            AiProviderRegistry.SaveProvider(_config);
+            DialogResult = true;
+            Close();
         }
-
-        if (!string.IsNullOrEmpty(key))
+        catch (Exception ex)
         {
-            SecretStorageService.SaveSecret(_config.SecretId, key);
+            MessageBox.Show(ex.Message, "保存失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
-
-        AiProviderRegistry.SaveProvider(_config);
-        DialogResult = true;
-        Close();
     }
 }

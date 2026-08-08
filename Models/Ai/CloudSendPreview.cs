@@ -12,5 +12,6 @@ public class CloudSendPreview
     public bool IncludesWallpaperContext { get; set; }
     public bool IncludesDynamicDataContext { get; set; }
     public bool IncludesClipboard { get; set; }
+    public bool IncludesSystemInfo { get; set; }
     public string SanitizedPreview { get; set; } = string.Empty;
 }

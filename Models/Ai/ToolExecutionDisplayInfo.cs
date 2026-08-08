@@ -44,7 +44,7 @@ public class ToolExecutionDisplayInfo
                     {
                         Icon = "⚙️",
                         Title = isSuccess ? $"工具 {toolName} 已执行" : $"工具 {toolName} 执行失败",
-                        Detail = argumentsJson,
+                        Detail = isSuccess ? "工具执行完成" : "工具执行失败",
                         IsSuccess = isSuccess
                     };
             }
@@ -55,7 +55,7 @@ public class ToolExecutionDisplayInfo
             {
                 Icon = "⚙️",
                 Title = toolName,
-                Detail = argumentsJson,
+                Detail = isSuccess ? "工具执行完成" : "工具执行失败",
                 IsSuccess = isSuccess
             };
         }

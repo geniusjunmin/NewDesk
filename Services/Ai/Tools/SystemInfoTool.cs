@@ -24,13 +24,22 @@ public class SystemInfoTool : IAiTool
 
     public Task<AiToolResult> ExecuteAsync(string argumentsJson)
     {
+        if (!SettingsService.LoadSettings().AllowAiSystemInfo)
+        {
+            return Task.FromResult(new AiToolResult
+            {
+                IsError = true,
+                OutputJson = JsonSerializer.Serialize(new { success = false, error = "system_info_not_allowed" })
+            });
+        }
+
         var info = new
         {
             OSVersion = Environment.OSVersion.ToString(),
             Is64BitOS = Environment.Is64BitOperatingSystem,
             ProcessorCount = Environment.ProcessorCount,
             MachineName = Environment.MachineName,
-            AppVersion = "2.2.0",
+            AppVersion = AppVersionService.Version,
             DotNetVersion = Environment.Version.ToString()
         };
 

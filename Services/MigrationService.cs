@@ -20,14 +20,16 @@ public class MigrationRunResult
     public bool Success { get; set; } = true;
     public List<string> FailedDomains { get; set; } = new();
     public List<string> CompletedSteps { get; set; } = new();
+    public List<string> Warnings { get; set; } = new();
 }
 
 public static class MigrationService
 {
+    public static string? LastRepairWarning { get; internal set; }
     public static readonly Dictionary<string, int> TargetVersions = new()
     {
         { "Settings", 2 },
-        { "Reminders", 2 },
+        { "Reminders", 3 },
         { "Wallpapers", 1 },
         { "DynamicData", 1 },
         { "Passwords", 1 },
@@ -38,6 +40,7 @@ public static class MigrationService
 
     public static MigrationRunResult RunAllMigrationsIfNeeded()
     {
+        LastRepairWarning = null;
         var result = new MigrationRunResult();
         try
         {
@@ -81,6 +84,12 @@ public static class MigrationService
         return result;
     }
 
+    public static MigrationRunResult ReconcileAfterRestore(MigrationState? restoredVersions)
+    {
+        SaveMigrationState(restoredVersions ?? new MigrationState());
+        return RunAllMigrationsIfNeeded();
+    }
+
     private static int GetDomainVersion(MigrationState state, string domain) => domain switch
     {
         "Settings" => state.Settings,
@@ -119,7 +128,7 @@ public static class MigrationService
         return new MigrationState();
     }
 
-    private static void SaveMigrationState(MigrationState state)
+    internal static void SaveMigrationState(MigrationState state)
     {
         try
         {
@@ -129,6 +138,7 @@ public static class MigrationService
         catch (Exception ex)
         {
             AppDataPath.LogError("MigrationService.SaveMigrationState", ex);
+            throw;
         }
     }
 }

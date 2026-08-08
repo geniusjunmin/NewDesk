@@ -85,6 +85,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
                         <CheckBox x:Name="AllowReminderContextCheckBox" Grid.Row="0" Grid.Column="0" Content="提醒事项上下文" Click="ImmediateSave_Click" Margin="0,4"/>
@@ -95,6 +96,7 @@
 
                         <CheckBox x:Name="AllowLogsCheckBox" Grid.Row="2" Grid.Column="0" Content="系统运行日志" Click="ImmediateSave_Click" Margin="0,4"/>
                         <CheckBox x:Name="AllowClipboardCheckBox" Grid.Row="2" Grid.Column="1" Content="剪贴板文本" Click="ImmediateSave_Click" Margin="0,4"/>
+                        <CheckBox x:Name="AllowSystemInfoCheckBox" Grid.Row="3" Grid.Column="0" Content="系统设备信息" Click="ImmediateSave_Click" Margin="0,4"/>
                     </Grid>
 
                     <CheckBox x:Name="AllowBackgroundCloudCheckBox" Content="允许后台 Cloud AI (供定时器、AI 动态数据静默更新使用)" Style="{StaticResource ToggleSwitchStyle}" Click="ImmediateSave_Click"/>
@@ -186,10 +188,10 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="提醒检查频率：" Style="{StaticResource BodyTextStyle}"/>
-                            <TextBlock Text="检测日程提醒的时间间隔" Style="{StaticResource CaptionTextStyle}" Margin="0,2,0,0"/>
+                            <TextBlock Text="提醒检查频率（旧设置，仅兼容）：" Style="{StaticResource BodyTextStyle}"/>
+                            <TextBlock Text="新调度器固定每分钟检查，以保证定时提醒不会错过。" Style="{StaticResource CaptionTextStyle}" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <ComboBox x:Name="ReminderFrequencyComboBox" Grid.Column="1" Width="140" SelectionChanged="ReminderFrequency_SelectionChanged">
+                        <ComboBox x:Name="ReminderFrequencyComboBox" Grid.Column="1" Width="140" IsEnabled="False" SelectionChanged="ReminderFrequency_SelectionChanged">
                             <ComboBoxItem Content="每天一次"/>
                             <ComboBoxItem Content="每小时"/>
                             <ComboBoxItem Content="每半小时"/>
@@ -269,6 +271,7 @@
                     <TextBlock Text="数据与便携备份" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
 
                     <TextBlock x:Name="DataPathText" Text="数据目录：%AppData%\NewDesk" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,12"/>
+                    <TextBlock Text="AI 对话历史使用 Windows 用户加密，不包含在便携备份中。" Style="{StaticResource CaptionTextStyle}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,12" TextWrapping="Wrap"/>
 
                     <WrapPanel Margin="0,0,0,12">
                         <Button x:Name="OpenDataFolderButton" Content="📁 打开数据目录" Style="{StaticResource SecondaryButton}" Margin="0,0,8,8" Click="OpenDataFolderButton_Click"/>

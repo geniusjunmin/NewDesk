@@ -45,7 +45,7 @@ public class AiProviderConfig
     public string Name { get; set; } = "OpenAI";
     public string BaseUrl { get; set; } = "https://api.openai.com/v1";
     public string? SecretId { get; set; }
-    public string SelectedModel { get; set; } = "gpt-4o";
+    public string SelectedModel { get; set; } = string.Empty;
     public AiApiProtocol Protocol { get; set; } = AiApiProtocol.Auto;
     public bool Streaming { get; set; } = true;
     public int TimeoutSeconds { get; set; } = 300;
@@ -106,6 +106,7 @@ public class AiMessage
     public DateTime Timestamp { get; set; } = DateTime.Now;
     public List<AiToolCall> ToolCalls { get; set; } = new();
     public string? ToolCallId { get; set; }
+    public List<ToolExecutionDisplayInfo> ToolEvents { get; set; } = new();
 }
 
 public class AiConversation

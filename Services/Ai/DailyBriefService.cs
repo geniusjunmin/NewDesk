@@ -27,6 +27,7 @@ public static class DailyBriefService
                 DataSensitivity = DataSensitivity.Personal,
                 DataCategories = AiDataCategory.UserPrompt,
                 RequestedContextCategories = AiDataCategory.Reminder | AiDataCategory.Wallpaper,
+                EnableTools = false,
                 CloudRequestMode = CloudRequestMode.PreAuthorizedBackground
             };
 

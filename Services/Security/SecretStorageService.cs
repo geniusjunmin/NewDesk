@@ -30,7 +30,7 @@ public static class SecretStorageService
         }
     }
 
-    public static string? GetSecret(string key)
+    public static string? GetSecret(string? key)
     {
         if (string.IsNullOrEmpty(key)) return null;
 
@@ -41,7 +41,7 @@ public static class SecretStorageService
         }
     }
 
-    public static void DeleteSecret(string key)
+    public static void DeleteSecret(string? key)
     {
         if (string.IsNullOrEmpty(key)) return;
 

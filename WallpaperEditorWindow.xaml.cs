@@ -36,6 +36,8 @@ public partial class WallpaperEditorWindow : Window
     private double _dragStartElementX;
     private double _dragStartElementY;
     private UIElement? _draggedVisualElement;
+    private bool _updatingPositionFromDrag;
+    internal int RenderCanvasCallCount { get; private set; }
 
     public WallpaperEditorWindow() : this(null)
     {
@@ -194,6 +196,7 @@ public partial class WallpaperEditorWindow : Window
     private void RenderCanvasElements()
     {
         if (_currentWallpaper == null) return;
+        RenderCanvasCallCount++;
 
         MainCanvas.Children.Clear();
         MainCanvas.Children.Add(SelectionBorder);
@@ -229,35 +232,7 @@ public partial class WallpaperEditorWindow : Window
     {
         string text = WallpaperTextRenderer.GetRenderText(element, DynamicDataService.LoadSources());
 
-        Color color;
-        try { color = (Color)ColorConverter.ConvertFromString(element.Color); }
-        catch { color = Colors.White; }
-
-        var tb = new TextBlock
-        {
-            Text = text,
-            FontSize = element.FontSize,
-            FontFamily = new FontFamily(element.FontFamily),
-            Foreground = new SolidColorBrush(color),
-            FontWeight = element.Bold ? FontWeights.Bold : FontWeights.Normal,
-            FontStyle = element.Italic ? FontStyles.Italic : FontStyles.Normal,
-            Cursor = element.IsLocked ? Cursors.Arrow : Cursors.SizeAll,
-            Tag = element
-        };
-
-        if (element.Underline)
-        {
-            tb.TextDecorations = TextDecorations.Underline;
-        }
-
-        tb.TextAlignment = element.Alignment switch
-        {
-            "Center" => TextAlignment.Center,
-            "Right" => TextAlignment.Right,
-            _ => TextAlignment.Left
-        };
-
-        return tb;
+        return WallpaperElementVisualFactory.CreateTextBlock(element, text);
     }
 
     private void SelectElement(TextElementState? element)
@@ -330,16 +305,23 @@ public partial class WallpaperEditorWindow : Window
             double newX = Math.Max(0, _dragStartElementX + deltaX);
             double newY = Math.Max(0, _dragStartElementY + deltaY);
 
-            _selectedElement.X = newX;
-            _selectedElement.Y = newY;
+            if (!WallpaperEditorElementFactory.TrySetPosition(_selectedElement, newX, newY)) return;
 
             Canvas.SetLeft(_draggedVisualElement, newX);
             Canvas.SetTop(_draggedVisualElement, newY);
             Canvas.SetLeft(SelectionBorder, newX - 4);
             Canvas.SetTop(SelectionBorder, newY - 4);
 
-            PositionXTextBox.Text = Math.Round(newX).ToString();
-            PositionYTextBox.Text = Math.Round(newY).ToString();
+            _updatingPositionFromDrag = true;
+            try
+            {
+                PositionXTextBox.Text = Math.Round(newX).ToString();
+                PositionYTextBox.Text = Math.Round(newY).ToString();
+            }
+            finally
+            {
+                _updatingPositionFromDrag = false;
+            }
         }
     }
 
@@ -459,17 +441,10 @@ public partial class WallpaperEditorWindow : Window
             return;
         }
 
-        var source = sources[0];
-        AddElement(new TextElementState
-        {
-            Text = $"{{{source.Name}}}",
-            DynamicType = "DataSource",
-            DataSourceId = source.Id,
-            X = 100,
-            Y = 280,
-            FontSize = 48,
-            Color = "#10B981"
-        });
+        var dialog = new DynamicDataSourcePickerDialog { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.SelectedDataSource == null) return;
+        var element = WallpaperEditorElementFactory.CreateDataSourceElement(dialog.SelectedDataSource);
+        if (element != null) AddElement(element);
     }
 
     private void AddCustomTextButton_Click(object sender, RoutedEventArgs e)
@@ -574,8 +549,15 @@ public partial class WallpaperEditorWindow : Window
             settings.CurrentWallpaperName = _currentWallpaper.Name;
             SettingsService.SaveSettings(settings);
 
-            await WallpaperService.GenerateAndSetWallpaperAsync(_currentWallpaper);
-            ToastManager.Show("应用成功", $"“{_currentWallpaper.Name}”已成功设为当前 Windows 桌面壁纸。", ToastType.Success);
+            var result = await WallpaperService.GenerateAndSetWallpaperAsync(_currentWallpaper);
+            if (result.IsSuccess)
+            {
+                ToastManager.Show("应用成功", $"“{_currentWallpaper.Name}”已成功设为当前 Windows 桌面壁纸。", ToastType.Success);
+            }
+            else
+            {
+                ToastManager.Show("应用失败", result.Message, ToastType.Error);
+            }
         }
         catch (Exception ex)
         {
@@ -595,7 +577,13 @@ public partial class WallpaperEditorWindow : Window
 
             if (dialog.ShowDialog() == true)
             {
-                string assetId = WallpaperService.SaveWallpaperAsset(dialog.FileName);
+                var assetResult = WallpaperService.SaveWallpaperAsset(dialog.FileName);
+                if (!assetResult.IsSuccess || string.IsNullOrEmpty(assetResult.Value))
+                {
+                    ToastManager.Show("导入错误", assetResult.Message, ToastType.Error);
+                    return;
+                }
+                string assetId = assetResult.Value;
                 string assetPath = WallpaperService.GetAssetPath(assetId);
 
                 double width = 1920;
@@ -711,14 +699,25 @@ public partial class WallpaperEditorWindow : Window
 
     private void Position_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_isInitializing || _selectedElement == null) return;
+        if (_isInitializing || _updatingPositionFromDrag || _selectedElement == null || _selectedElement.IsLocked) return;
         if (double.TryParse(PositionXTextBox.Text, out double x) && double.TryParse(PositionYTextBox.Text, out double y))
         {
-            _selectedElement.X = Math.Max(0, x);
-            _selectedElement.Y = Math.Max(0, y);
-            RenderCanvasElements();
+            if (!WallpaperEditorElementFactory.TrySetPosition(_selectedElement, x, y)) return;
+            UpdateSelectedVisualPosition();
             MarkDirty();
         }
+    }
+
+    private void UpdateSelectedVisualPosition()
+    {
+        if (_selectedElement == null) return;
+        var visual = MainCanvas.Children.OfType<TextBlock>().FirstOrDefault(item => ReferenceEquals(item.Tag, _selectedElement));
+        if (visual != null)
+        {
+            Canvas.SetLeft(visual, _selectedElement.X);
+            Canvas.SetTop(visual, _selectedElement.Y);
+        }
+        UpdateSelectionBorder();
     }
 
     // Phase 25: Exact alignment math using element size measurement
@@ -731,7 +730,7 @@ public partial class WallpaperEditorWindow : Window
 
     private void QuickAlignLeft_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedElement == null) return;
+        if (_selectedElement == null || _selectedElement.IsLocked) return;
         PushUndoSnapshot();
         _selectedElement.X = 0;
         RenderCanvasElements();
@@ -741,7 +740,7 @@ public partial class WallpaperEditorWindow : Window
 
     private void QuickAlignCenterH_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedElement == null || _currentWallpaper == null) return;
+        if (_selectedElement == null || _selectedElement.IsLocked || _currentWallpaper == null) return;
         PushUndoSnapshot();
         var (w, _) = GetElementSize(_selectedElement);
         _selectedElement.X = Math.Max(0, (_currentWallpaper.DesignWidth - w) / 2);
@@ -752,7 +751,7 @@ public partial class WallpaperEditorWindow : Window
 
     private void QuickAlignRight_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedElement == null || _currentWallpaper == null) return;
+        if (_selectedElement == null || _selectedElement.IsLocked || _currentWallpaper == null) return;
         PushUndoSnapshot();
         var (w, _) = GetElementSize(_selectedElement);
         _selectedElement.X = Math.Max(0, _currentWallpaper.DesignWidth - w);
@@ -763,7 +762,7 @@ public partial class WallpaperEditorWindow : Window
 
     private void QuickAlignTop_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedElement == null) return;
+        if (_selectedElement == null || _selectedElement.IsLocked) return;
         PushUndoSnapshot();
         _selectedElement.Y = 0;
         RenderCanvasElements();
@@ -773,7 +772,7 @@ public partial class WallpaperEditorWindow : Window
 
     private void QuickAlignCenterV_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedElement == null || _currentWallpaper == null) return;
+        if (_selectedElement == null || _selectedElement.IsLocked || _currentWallpaper == null) return;
         PushUndoSnapshot();
         var (_, h) = GetElementSize(_selectedElement);
         _selectedElement.Y = Math.Max(0, (_currentWallpaper.DesignHeight - h) / 2);
@@ -784,7 +783,7 @@ public partial class WallpaperEditorWindow : Window
 
     private void QuickAlignBottom_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedElement == null || _currentWallpaper == null) return;
+        if (_selectedElement == null || _selectedElement.IsLocked || _currentWallpaper == null) return;
         PushUndoSnapshot();
         var (_, h) = GetElementSize(_selectedElement);
         _selectedElement.Y = Math.Max(0, _currentWallpaper.DesignHeight - h);
@@ -863,6 +862,24 @@ public partial class WallpaperEditorWindow : Window
             RenderCanvasElements();
             MarkDirty();
         }
+    }
+
+    private void ToggleLayerVisibility_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: TextElementState element }) return;
+        PushUndoSnapshot();
+        element.IsVisible = !element.IsVisible;
+        RenderCanvasElements();
+        MarkDirty();
+    }
+
+    private void ToggleLayerLock_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: TextElementState element }) return;
+        PushUndoSnapshot();
+        element.IsLocked = !element.IsLocked;
+        RenderCanvasElements();
+        MarkDirty();
     }
 
     private void ZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -992,8 +1009,8 @@ public partial class WallpaperEditorWindow : Window
             applyItem.Click += async (s, ev) =>
             {
                 SelectWallpaper(targetState);
-                await WallpaperService.GenerateAndSetWallpaperAsync(targetState);
-                ToastManager.Show("成功", $"已设置壁纸“{targetState.Name}”。", ToastType.Success);
+                var result = await WallpaperService.GenerateAndSetWallpaperAsync(targetState);
+                ToastManager.Show(result.IsSuccess ? "成功" : "失败", result.IsSuccess ? $"已设置壁纸“{targetState.Name}”。" : result.Message, result.IsSuccess ? ToastType.Success : ToastType.Error);
             };
 
             var deleteItem = new MenuItem { Header = "🗑 删除壁纸" };

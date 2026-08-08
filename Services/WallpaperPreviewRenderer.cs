@@ -16,7 +16,7 @@ public static class WallpaperPreviewRenderer
         double designWidth = 1920,
         double designHeight = 1080,
         ImageSource? bgImage = null,
-        List<DynamicDataSource>? sources = null)
+        WallpaperRenderContext? renderContext = null)
     {
         if (renderSize.Width <= 0 || renderSize.Height <= 0) return;
 
@@ -34,7 +34,7 @@ public static class WallpaperPreviewRenderer
         var sortedLayers = layers.OrderBy(l => l.ZIndex).ToList();
         foreach (var layer in sortedLayers)
         {
-            string renderText = WallpaperTextRenderer.GetRenderText(layer, sources);
+            string renderText = WallpaperTextRenderer.ResolveElementText(layer, renderContext);
             WallpaperTextRenderer.DrawElement(dc, layer, renderText, scaleX, scaleY);
         }
     }

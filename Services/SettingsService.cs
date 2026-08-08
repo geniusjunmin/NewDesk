@@ -47,6 +47,7 @@ public static class SettingsService
         catch (Exception ex)
         {
             AppDataPath.LogError("SettingsService.SaveSettings", ex);
+            throw new IOException($"设置保存失败: {ex.Message}", ex);
         }
     }
 }

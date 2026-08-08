@@ -63,7 +63,10 @@
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="当前 AI 服务：" Style="{StaticResource CaptionTextStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                        <ComboBox x:Name="ProviderComboBox" Width="180" SelectionChanged="ProviderComboBox_SelectionChanged"/>
+                        <StackPanel>
+                            <ComboBox x:Name="ProviderComboBox" Width="180" SelectionChanged="ProviderComboBox_SelectionChanged"/>
+                            <TextBlock x:Name="ProviderStatusText" Foreground="{DynamicResource WarningBrush}" FontSize="11" TextWrapping="Wrap" MaxWidth="260"/>
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
             </Border>

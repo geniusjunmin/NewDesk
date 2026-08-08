@@ -68,7 +68,7 @@ public static class DataService
         string json = JsonSerializer.Serialize(passwords, new JsonSerializerOptions { WriteIndented = false });
         var payload = CryptographyService.Encrypt(json, MasterPassword);
         string payloadJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(AppDataPath.PasswordsFile, payloadJson);
+        SafeFileWriter.WriteAllText(AppDataPath.PasswordsFile, payloadJson);
     }
 
     public static List<Reminder> LoadReminders()
@@ -96,15 +96,8 @@ public static class DataService
     public static void SaveReminders(IEnumerable<Reminder> reminders)
     {
         AppDataPath.Initialize();
-        try
-        {
-            string json = JsonSerializer.Serialize(reminders, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(AppDataPath.RemindersFile, json);
-        }
-        catch (Exception ex)
-        {
-            AppDataPath.LogError("DataService.SaveReminders", ex);
-        }
+        string json = JsonSerializer.Serialize(reminders, new JsonSerializerOptions { WriteIndented = true });
+        SafeFileWriter.WriteAllText(AppDataPath.RemindersFile, json);
     }
     
     public static bool PasswordFileExists() => File.Exists(PasswordsFilePath);

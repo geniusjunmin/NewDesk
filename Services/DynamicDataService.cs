@@ -24,6 +24,13 @@ public class OperationResult
     public static OperationResult Fail(string msg, Exception? ex = null) => new OperationResult { IsSuccess = false, Message = msg, Exception = ex };
 }
 
+public class OperationResult<T> : OperationResult
+{
+    public T? Value { get; set; }
+    public static OperationResult<T> Success(T value, string message = "") => new() { IsSuccess = true, Value = value, Message = message };
+    public new static OperationResult<T> Fail(string message, Exception? ex = null) => new() { IsSuccess = false, Message = message, Exception = ex };
+}
+
 public class ExtractionResult
 {
     public bool IsSuccess { get; set; }
@@ -34,9 +41,18 @@ public class ExtractionResult
     public static ExtractionResult Fail(string msg) => new ExtractionResult { IsSuccess = false, ErrorMessage = msg };
 }
 
+public sealed class DynamicDataTestResult
+{
+    public bool Success { get; init; }
+    public string Value { get; init; } = string.Empty;
+    public string RawContent { get; init; } = string.Empty;
+    public string Error { get; init; } = string.Empty;
+}
+
 public static class DynamicDataService
 {
     private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
+    internal static Func<HttpRequestMessage, Task<HttpResponseMessage>>? HttpSenderOverride { get; set; }
     private static List<DynamicDataSource> _sources = new();
 
     private static readonly HashSet<string> SensitiveHeaders = new(StringComparer.OrdinalIgnoreCase)
@@ -183,49 +199,75 @@ public static class DynamicDataService
 
     private static async Task<string> FetchHttpSourceAsync(DynamicDataSource source)
     {
-        bool hasSecrets = source.SecretHeaders.Count > 0;
-        EndpointSecurityPolicy.ValidateEndpoint(source.Url, hasSecrets);
-
-        using var req = new HttpRequestMessage(source.Method.ToUpper() == "POST" ? HttpMethod.Post : HttpMethod.Get, source.Url);
-        req.Headers.UserAgent.ParseAdd("NewDesk/2.2");
-
-        foreach (var kvp in source.Headers)
+        var testResult = await TestSourceAsync(source);
+        if (!testResult.Success)
         {
-            req.Headers.TryAddWithoutValidation(kvp.Key, kvp.Value);
-        }
-
-        foreach (var kvp in source.SecretHeaders)
-        {
-            string? secretVal = SecretStorageService.GetSecret(kvp.Value);
-            if (!string.IsNullOrEmpty(secretVal))
-            {
-                req.Headers.TryAddWithoutValidation(kvp.Key, secretVal);
-            }
-        }
-
-        using var resp = await HttpClient.SendAsync(req);
-        resp.EnsureSuccessStatusCode();
-
-        string rawContent = await resp.Content.ReadAsStringAsync();
-        var extractRes = ExtractValue(rawContent, source.ExtractionType, source.ExtractionRule);
-
-        if (!extractRes.IsSuccess)
-        {
-            source.LastError = extractRes.ErrorMessage;
+            source.LastError = testResult.Error;
             source.LastErrorTime = DateTime.Now;
-
             return !string.IsNullOrEmpty(source.LastCachedValue) ? source.LastCachedValue : "——";
         }
 
-        string finalResult = (source.FormatPrefix ?? "") + extractRes.Value + (source.FormatSuffix ?? "");
-
-        source.LastCachedValue = finalResult;
+        source.LastCachedValue = testResult.Value;
         source.LastCachedTime = DateTime.Now;
         source.LastSuccessfulTime = DateTime.Now;
         source.LastError = null;
         SaveSourcesInternal(_sources);
+        return testResult.Value;
+    }
 
-        return finalResult;
+    public static async Task<DynamicDataTestResult> TestSourceAsync(DynamicDataSource source)
+    {
+        try
+        {
+            bool hasSecrets = source.SecretHeaders.Count > 0;
+            EndpointSecurityPolicy.ValidateEndpoint(source.Url, hasSecrets);
+            using var request = CreateHttpRequest(source);
+            using var response = HttpSenderOverride != null
+                ? await HttpSenderOverride(request)
+                : await HttpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            string rawContent = await response.Content.ReadAsStringAsync();
+            var extraction = ExtractValue(rawContent, source.ExtractionType, source.ExtractionRule);
+            if (!extraction.IsSuccess)
+            {
+                return new DynamicDataTestResult { RawContent = rawContent, Error = extraction.ErrorMessage };
+            }
+
+            return new DynamicDataTestResult
+            {
+                Success = true,
+                RawContent = rawContent,
+                Value = (source.FormatPrefix ?? "") + extraction.Value + (source.FormatSuffix ?? "")
+            };
+        }
+        catch (Exception ex)
+        {
+            return new DynamicDataTestResult { Error = ex.Message };
+        }
+    }
+
+    private static HttpRequestMessage CreateHttpRequest(DynamicDataSource source)
+    {
+        var request = new HttpRequestMessage(
+            source.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) ? HttpMethod.Post : HttpMethod.Get,
+            source.Url);
+        request.Headers.UserAgent.ParseAdd($"NewDesk/{AppVersionService.Version}");
+
+        foreach (var pair in source.Headers)
+        {
+            request.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
+        }
+        foreach (var pair in source.SecretHeaders)
+        {
+            string? value = SecretStorageService.GetSecret(pair.Value);
+            if (!string.IsNullOrEmpty(value))
+            {
+                request.Headers.TryAddWithoutValidation(pair.Key, value);
+            }
+        }
+
+        return request;
     }
 
     private static async Task<string> FetchAiTextSourceAsync(DynamicDataSource source)
@@ -270,7 +312,8 @@ public static class DynamicDataService
             ModelOverride = source.AiModelId,
             CloudRequestMode = CloudRequestMode.PreAuthorizedBackground,
             DataCategories = AiDataCategory.DynamicData,
-            DataSensitivity = DataSensitivity.Personal
+            DataSensitivity = DataSensitivity.Personal,
+            EnableTools = false
         };
 
         var resp = await AiOrchestrator.ExecuteTurnAsync(req);

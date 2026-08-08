@@ -68,9 +68,9 @@ public static class WallpaperService
         }
     }
 
-    public static string SaveWallpaperAsset(string sourceFilePath)
+    public static OperationResult<string> SaveWallpaperAsset(string sourceFilePath)
     {
-        if (!File.Exists(sourceFilePath)) return sourceFilePath;
+        if (!File.Exists(sourceFilePath)) return OperationResult<string>.Fail("源图片文件不存在。");
 
         try
         {
@@ -83,12 +83,12 @@ public static class WallpaperService
 
             byte[] data = File.ReadAllBytes(sourceFilePath);
             SafeFileWriter.WriteAllBytes(destPath, data);
-            return assetId;
+            return OperationResult<string>.Success(assetId);
         }
         catch (Exception ex)
         {
             AppDataPath.LogError("WallpaperService.SaveWallpaperAsset", ex);
-            return sourceFilePath;
+            return OperationResult<string>.Fail($"壁纸资源保存失败: {ex.Message}", ex);
         }
     }
 
@@ -228,40 +228,22 @@ public static class WallpaperService
         }
     }
 
-    public static async Task GenerateAndSetWallpaperAsync(WallpaperState state)
+    public static async Task<OperationResult> GenerateAndSetWallpaperAsync(WallpaperState state)
     {
         AppDataPath.LogInfo($"Starting GenerateAndSetWallpaperAsync for {state.Name}");
 
-        // 1. Fetch Dynamic Data & Legacy API Data with single-request Task deduplication per render pass
-        var dataSourceTasks = new Dictionary<string, Task<string>>();
         var sources = DynamicDataService.LoadSources();
-        var sourceMap = sources.ToDictionary(s => s.Id, s => s);
-
-        foreach (var element in state.TextElements.Where(e => e.IsVisible))
-        {
-            if (!string.IsNullOrEmpty(element.DataSourceId) && sourceMap.TryGetValue(element.DataSourceId, out var src))
-            {
-                if (!dataSourceTasks.ContainsKey(element.DataSourceId))
-                {
-                    dataSourceTasks[element.DataSourceId] = DynamicDataService.FetchValueAsync(src);
-                }
-            }
-            else if (element.DynamicType == "Api" && !string.IsNullOrEmpty(element.ApiUrl))
-            {
-                string key = element.ApiUrl!;
-                if (!dataSourceTasks.ContainsKey(key))
-                {
-                    dataSourceTasks[key] = GetApiTextAsync(element.ApiUrl!, element.ApiRegex, element.ApiFormatting, element.ApiPrefix, element.ApiSuffix);
-                }
-            }
-        }
-
-        await Task.WhenAll(dataSourceTasks.Values);
+        var renderContext = await BuildRenderContextAsync(state, sources);
 
         string bgPath = ResolveAssetPath(state.BackgroundImagePath, state.BackgroundAssetId);
 
         // 2. Render and Set Desktop Wallpaper using WallpaperPreviewRenderer
-        await Application.Current.Dispatcher.InvokeAsync(async () =>
+        if (Application.Current?.Dispatcher == null)
+        {
+            return OperationResult.Fail("WPF Dispatcher 不可用，无法应用桌面壁纸。");
+        }
+
+        return await Application.Current.Dispatcher.InvokeAsync(() =>
         {
             try
             {
@@ -301,7 +283,7 @@ public static class WallpaperService
                             state.DesignWidth > 0 ? state.DesignWidth : 1920,
                             state.DesignHeight > 0 ? state.DesignHeight : 1080,
                             bgImage,
-                            sources);
+                            renderContext);
                     }
 
                     var rtb = new RenderTargetBitmap(pixelWidth, pixelHeight, 96, 96, PixelFormats.Pbgra32);
@@ -323,14 +305,67 @@ public static class WallpaperService
                     }
                 }
 
-                if (!anySuccess) throw new Exception("All COM attempts failed.");
+                var applyResult = CreateApplyResult(anySuccess);
+                if (!applyResult.IsSuccess) return applyResult;
                 desktopWallpaper.SetPosition(NativeMethods.DesktopWallpaperPosition.Fill);
+                return applyResult;
             }
             catch (Exception ex)
             {
                 AppDataPath.LogError($"Multi-monitor wallpaper rendering failed: {ex.Message}", ex);
+                return OperationResult.Fail($"壁纸应用失败: {ex.Message}", ex);
             }
         });
+    }
+
+    internal static OperationResult CreateApplyResult(bool anySuccess)
+    {
+        return anySuccess
+            ? OperationResult.Success("壁纸已应用。")
+            : OperationResult.Fail("壁纸应用失败: All COM attempts failed.");
+    }
+
+    internal static async Task<WallpaperRenderContext> BuildRenderContextAsync(
+        WallpaperState state,
+        List<DynamicDataSource> sources,
+        Func<DynamicDataSource, Task<string>>? dataSourceFetcher = null,
+        Func<TextElementState, Task<string>>? legacyApiFetcher = null)
+    {
+        dataSourceFetcher ??= source => DynamicDataService.FetchValueAsync(source);
+        legacyApiFetcher ??= element => GetApiTextAsync(
+            element.ApiUrl!, element.ApiRegex, element.ApiFormatting, element.ApiPrefix, element.ApiSuffix);
+
+        var sourceMap = sources.ToDictionary(source => source.Id, source => source, StringComparer.OrdinalIgnoreCase);
+        var dataSourceTasks = new Dictionary<string, Task<string>>(StringComparer.OrdinalIgnoreCase);
+        var legacyTasks = new Dictionary<string, Task<string>>(StringComparer.Ordinal);
+        var legacyElementKeys = new Dictionary<Guid, string>();
+
+        foreach (var element in state.TextElements.Where(element => element.IsVisible))
+        {
+            if (!string.IsNullOrEmpty(element.DataSourceId) && sourceMap.TryGetValue(element.DataSourceId, out var source))
+            {
+                if (!dataSourceTasks.ContainsKey(element.DataSourceId))
+                {
+                    dataSourceTasks[element.DataSourceId] = dataSourceFetcher(source);
+                }
+            }
+            else if (element.DynamicType == "Api" && !string.IsNullOrEmpty(element.ApiUrl))
+            {
+                string key = string.Join("\u001f", element.ApiUrl, element.ApiRegex, element.ApiFormatting, element.ApiPrefix, element.ApiSuffix);
+                if (!legacyTasks.ContainsKey(key))
+                {
+                    legacyTasks[key] = legacyApiFetcher(element);
+                }
+                legacyElementKeys[element.Id] = key;
+            }
+        }
+
+        await Task.WhenAll(dataSourceTasks.Values.Concat(legacyTasks.Values));
+        return new WallpaperRenderContext
+        {
+            DataSourceValues = dataSourceTasks.ToDictionary(pair => pair.Key, pair => pair.Value.Result, StringComparer.OrdinalIgnoreCase),
+            LegacyApiValues = legacyElementKeys.ToDictionary(pair => pair.Key, pair => legacyTasks[pair.Value].Result)
+        };
     }
 
     private static async Task<string> GetApiTextAsync(string url, string? regex, string? formatting, string? prefix = null, string? suffix = null)

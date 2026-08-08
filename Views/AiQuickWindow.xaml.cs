@@ -94,14 +94,19 @@ public partial class AiQuickWindow : Window
                 DataSensitivity = DataSensitivity.Personal,
                 DataCategories = AiDataCategory.UserPrompt,
                 RequestedContextCategories = AiDataCategory.Reminder | AiDataCategory.Wallpaper,
+                EnableTools = true,
+                AllowedToolNames = new(StringComparer.OrdinalIgnoreCase)
+                {
+                    "create_reminder", "switch_wallpaper", "get_system_info"
+                },
                 CloudConsentCallback = preview => CloudConsentService.ShowInteractiveConsentAsync(this, preview),
-                ConfirmationCallback = async pending =>
+                ConfirmationCallback = pending =>
                 {
                     var dlg = new Dialogs.ConfirmDialog("AI 工具操作请求", pending.HumanReadablePreview)
                     {
                         Owner = this
                     };
-                    return dlg.ShowDialog() == true;
+                    return Task.FromResult(dlg.ShowDialog() == true);
                 },
                 ToolExecutionProgress = new Progress<ToolExecutionDisplayInfo>(info =>
                 {

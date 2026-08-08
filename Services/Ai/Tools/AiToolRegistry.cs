@@ -25,8 +25,14 @@ public static class AiToolRegistry
 
     public static List<AiToolDefinition> GetToolDefinitions()
     {
+        return GetToolDefinitions(ToolsMap.Keys);
+    }
+
+    public static List<AiToolDefinition> GetToolDefinitions(IEnumerable<string> allowedToolNames)
+    {
+        var allowed = new HashSet<string>(allowedToolNames, System.StringComparer.OrdinalIgnoreCase);
         var list = new List<AiToolDefinition>();
-        foreach (var t in ToolsMap.Values)
+        foreach (var t in ToolsMap.Values.Where(t => allowed.Contains(t.Name)))
         {
             list.Add(new AiToolDefinition
             {

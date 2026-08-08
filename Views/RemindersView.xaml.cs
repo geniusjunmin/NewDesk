@@ -61,7 +61,7 @@ public partial class RemindersView : UserControl
             LaterBadgeText.Text = laterList.Count.ToString();
             LaterHeaderBorder.Visibility = laterList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
-            EmptyStateBorder.Visibility = _reminders.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            EmptyStateBorder.Visibility = activeReminders.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (Exception ex)
         {
@@ -86,8 +86,8 @@ public partial class RemindersView : UserControl
         if (editor.ShowDialog() == true)
         {
             _reminders.Add(editor.EditedReminder);
-            SaveAndReload();
-            ToastManager.Show("成功", "已创建新提醒事项。", ToastType.Success);
+            if (SaveAndReload()) ToastManager.Show("成功", "已创建新提醒事项。", ToastType.Success);
+            else _reminders.Remove(editor.EditedReminder);
         }
     }
 
@@ -108,8 +108,14 @@ public partial class RemindersView : UserControl
                 {
                     _reminders[index] = editor.EditedReminder;
                 }
-                SaveAndReload();
-                ToastManager.Show("成功", "已修改提醒事项。", ToastType.Success);
+                if (SaveAndReload())
+                {
+                    ToastManager.Show("成功", "已修改提醒事项。", ToastType.Success);
+                }
+                else if (index >= 0)
+                {
+                    _reminders[index] = reminder;
+                }
             }
         }
     }
@@ -126,17 +132,26 @@ public partial class RemindersView : UserControl
             if (dialog.ShowDialog() == true)
             {
                 _reminders.Remove(reminder);
-                SaveAndReload();
-                ToastManager.Show("已删除", $"已删除“{reminder.Title}”。", ToastType.Info);
+                if (SaveAndReload()) ToastManager.Show("已删除", $"已删除“{reminder.Title}”。", ToastType.Info);
+                else _reminders.Add(reminder);
             }
         }
     }
 
-    private void SaveAndReload()
+    private bool SaveAndReload()
     {
-        DataService.SaveReminders(_reminders);
-        var settings = SettingsService.LoadSettings();
-        ReminderService.Start(_reminders, settings.ReminderFrequency);
-        LoadReminders();
+        try
+        {
+            DataService.SaveReminders(_reminders);
+            var settings = SettingsService.LoadSettings();
+            ReminderService.Start(_reminders, settings.ReminderFrequency);
+            LoadReminders();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ToastManager.Show("保存失败", ex.Message, ToastType.Error);
+            return false;
+        }
     }
 }

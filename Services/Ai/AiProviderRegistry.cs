@@ -81,8 +81,7 @@ public static class AiProviderRegistry
             {
                 string json = File.ReadAllText(path);
                 var loaded = JsonSerializer.Deserialize<List<AiProviderConfig>>(json) ?? new List<AiProviderConfig>();
-                // Filter out unconfigured disabled presets
-                _providers = loaded.Where(p => p.IsEnabled || !string.IsNullOrEmpty(p.SecretId)).ToList();
+                _providers = loaded;
             }
             else
             {
@@ -95,6 +94,12 @@ public static class AiProviderRegistry
         }
     }
 
+    internal static void ResetForTesting()
+    {
+        _providers = new List<AiProviderConfig>();
+        _isLoaded = false;
+    }
+
     private static void PersistProviders()
     {
         try
@@ -105,6 +110,7 @@ public static class AiProviderRegistry
         catch (Exception ex)
         {
             AppDataPath.LogError("AiProviderRegistry.PersistProviders", ex);
+            throw new IOException($"AI 服务配置保存失败: {ex.Message}", ex);
         }
     }
 }

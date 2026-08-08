@@ -30,13 +30,14 @@ public class ResponsesApiProvider : IAiProvider
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(Math.Max(5, config.TimeoutSeconds)) };
 
         bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(config.BaseUrl);
+        bool knownProvider = config.Kind is AiProviderKind.OpenAI or AiProviderKind.XAI;
 
         Capabilities = new AiProviderCapabilities
         {
             SupportsStreaming = config.Streaming,
-            SupportsVision = config.SupportsVisionOverride ?? true,
-            SupportsTools = config.SupportsToolsOverride ?? true,
-            SupportsStructuredOutput = config.SupportsStructuredOutputOverride ?? true,
+            SupportsVision = config.SupportsVisionOverride ?? knownProvider,
+            SupportsTools = config.SupportsToolsOverride ?? knownProvider,
+            SupportsStructuredOutput = config.SupportsStructuredOutputOverride ?? knownProvider,
             SupportsReasoning = true,
             SupportsResponsesApi = true,
             SupportsModelListing = true,

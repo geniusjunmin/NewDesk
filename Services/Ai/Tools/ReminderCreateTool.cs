@@ -18,7 +18,7 @@ public class ReminderCreateTool : IAiTool
         properties = new
         {
             title = new { type = "string", description = "提醒事项标题" },
-            scheduleType = new { type = "string", enumValues = new[] { "OneTime", "Yearly", "LunarYearly" }, description = "提醒类型：OneTime (一次性), Yearly (公历每年), LunarYearly (农历每年)" },
+            scheduleType = new { type = "string", @enum = new[] { "OneTime", "Yearly", "LunarYearly" }, description = "提醒类型：OneTime (一次性), Yearly (公历每年), LunarYearly (农历每年)" },
             dueAt = new { type = "string", description = "提醒到期时间 (一次性提醒必需)，格式为 ISO 8601 (例: 2026-08-09T15:00:00)" },
             month = new { type = "integer", description = "公历或农历月份 (1-12，每年提醒必需)" },
             day = new { type = "integer", description = "公历或农历日期 (1-31，每年提醒必需)" },
@@ -26,7 +26,7 @@ public class ReminderCreateTool : IAiTool
             daysInAdvance = new { type = "integer", description = "提前几天提醒 (默认 1 天)" },
             notes = new { type = "string", description = "备注说明 (可选)" }
         },
-        required = new[] { "title" }
+        required = new[] { "title", "scheduleType" }
     };
 
     public string BuildConfirmationPreview(string argumentsJson)
@@ -73,12 +73,13 @@ public class ReminderCreateTool : IAiTool
             var root = doc.RootElement;
 
             string title = root.GetProperty("title").GetString() ?? "新提醒";
-            string scheduleTypeStr = root.TryGetProperty("scheduleType", out var stElem) ? stElem.GetString() ?? "OneTime" : "OneTime";
+            string scheduleTypeStr = root.GetProperty("scheduleType").GetString()!;
             ReminderScheduleType scheduleType = scheduleTypeStr switch
             {
+                "OneTime" => ReminderScheduleType.OneTime,
                 "Yearly" => ReminderScheduleType.Yearly,
                 "LunarYearly" => ReminderScheduleType.LunarYearly,
-                _ => ReminderScheduleType.OneTime
+                _ => throw new InvalidOperationException($"Unsupported reminder schedule type: {scheduleTypeStr}")
             };
 
             DateTime? dueAt = null;
@@ -88,7 +89,7 @@ public class ReminderCreateTool : IAiTool
 
             if (root.TryGetProperty("time", out var timeElem) && timeElem.ValueKind == JsonValueKind.String)
             {
-                if (TimeSpan.TryParse(timeElem.GetString(), out var parsedTime))
+                if (ReminderTimeParser.TryParseClockTime(timeElem.GetString(), out var parsedTime))
                 {
                     timeOfDay = parsedTime;
                 }

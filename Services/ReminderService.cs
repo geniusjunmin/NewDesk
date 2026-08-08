@@ -10,99 +10,126 @@ namespace NewDesk.Services;
 
 public static class ReminderService
 {
+    private static readonly object LifecycleLock = new();
     private static Timer? _timer;
     private static List<Reminder> _reminders = new();
     private static ReminderFrequency _frequency;
+    private static int _isChecking;
     public static IClock Clock { get; set; } = SystemClock.Instance;
+    public static int ActiveTimerCount => Volatile.Read(ref _timer) == null ? 0 : 1;
 
     public static void Start(List<Reminder> reminders, ReminderFrequency frequency)
     {
-        _reminders = reminders;
-        _frequency = frequency;
-        _timer = new Timer(CheckReminders, null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
+        lock (LifecycleLock)
+        {
+            StopCore();
+            _reminders = reminders;
+            _frequency = frequency;
+            _timer = new Timer(CheckReminders, null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
+        }
     }
 
     public static void Stop()
     {
-        _timer?.Dispose();
+        lock (LifecycleLock)
+        {
+            StopCore();
+        }
+    }
+
+    private static void StopCore()
+    {
+        Interlocked.Exchange(ref _timer, null)?.Dispose();
+    }
+
+    internal static void SetRemindersForTesting(List<Reminder> reminders)
+    {
+        _reminders = reminders;
     }
 
     public static void CheckReminders(object? state)
     {
-        DateTime now = Clock.Now;
-        foreach (var reminder in _reminders.ToList())
+        if (Interlocked.Exchange(ref _isChecking, 1) != 0)
         {
-            if (reminder.IsCompleted) continue;
+            return;
+        }
 
-            // Handle Snooze
-            if (reminder.SnoozeUntil.HasValue)
+        try
+        {
+            DateTime now = Clock.Now;
+            bool notificationsEnabled = SettingsService.LoadSettings().EnableNotifications;
+            foreach (var reminder in _reminders.ToList())
             {
-                if (now < reminder.SnoozeUntil.Value)
+                if (reminder.IsCompleted) continue;
+
+                var nextOccurrence = ReminderScheduleCalculator.GetNextOccurrence(reminder, now);
+                if (nextOccurrence.HasValue)
+                {
+                    reminder.NextReminderDate = nextOccurrence.Value;
+                }
+
+                if (!notificationsEnabled)
                 {
                     continue;
                 }
-                else
+
+                if (reminder.SnoozeUntil.HasValue)
                 {
+                    if (now < reminder.SnoozeUntil.Value)
+                    {
+                        continue;
+                    }
+
                     reminder.SnoozeUntil = null;
                     NotifyAndSave(reminder, now, "Snooze 提醒时间已到！");
                     continue;
                 }
-            }
 
-            var nextOccurrence = ReminderScheduleCalculator.GetNextOccurrence(reminder, now);
-            if (!nextOccurrence.HasValue) continue;
+                var notificationWindow = ReminderScheduleCalculator.GetNotificationOccurrence(reminder, now);
+                if (notificationWindow == null) continue;
 
-            reminder.NextReminderDate = nextOccurrence.Value;
-
-            if (reminder.ScheduleType == ReminderScheduleType.OneTime)
-            {
-                DateTime due = nextOccurrence.Value;
-
-                // 1. Check Advance Notification
-                if (reminder.DaysInAdvance > 0 && reminder.AdvanceNotifiedAt == null)
+                if (reminder.ScheduleType == ReminderScheduleType.OneTime)
                 {
-                    DateTime advanceStart = due.AddDays(-reminder.DaysInAdvance);
-                    if (now >= advanceStart && now < due)
+                    DateTime due = notificationWindow.Occurrence;
+                    if (reminder.DaysInAdvance > 0 && reminder.AdvanceNotifiedAt == null &&
+                        now >= notificationWindow.AdvanceStart && now < due)
                     {
                         reminder.AdvanceNotifiedAt = now;
                         NotifyAndSave(reminder, now, $"提前 {reminder.DaysInAdvance} 天提醒！");
                         continue;
                     }
-                }
 
-                // 2. Check Final Due Notification
-                if (reminder.DueNotifiedAt == null && now >= due)
-                {
-                    reminder.DueNotifiedAt = now;
-                    reminder.IsCompleted = true;
-                    NotifyAndSave(reminder, now, "提醒时间已到！");
-                    continue;
-                }
-            }
-            else
-            {
-                DateTime occurrenceDate = nextOccurrence.Value.Date;
-
-                // 1. Check Advance Notification per occurrence
-                if (reminder.DaysInAdvance > 0 && reminder.LastAdvanceOccurrence?.Date != occurrenceDate)
-                {
-                    DateTime advanceStart = nextOccurrence.Value.AddDays(-reminder.DaysInAdvance);
-                    if (now >= advanceStart && now < nextOccurrence.Value)
+                    if (reminder.DueNotifiedAt == null && now >= due)
                     {
-                        reminder.LastAdvanceOccurrence = occurrenceDate;
-                        NotifyAndSave(reminder, now, $"提前 {reminder.DaysInAdvance} 天提醒！");
+                        reminder.DueNotifiedAt = now;
+                        reminder.IsCompleted = true;
+                        NotifyAndSave(reminder, now, "提醒时间已到！");
                         continue;
                     }
                 }
-
-                // 2. Check Final Due Notification per occurrence
-                if (reminder.LastDueOccurrence?.Date != occurrenceDate && now >= nextOccurrence.Value)
+                else
                 {
-                    reminder.LastDueOccurrence = occurrenceDate;
-                    NotifyAndSave(reminder, now, $"提醒时间已到 ({reminder.Title})！");
-                    continue;
+                    DateTime occurrence = notificationWindow.Occurrence;
+
+                    if (reminder.DaysInAdvance > 0 && reminder.LastAdvanceOccurrence != occurrence &&
+                        now >= notificationWindow.AdvanceStart && now < occurrence)
+                    {
+                        reminder.LastAdvanceOccurrence = occurrence;
+                        NotifyAndSave(reminder, now, $"提前 {reminder.DaysInAdvance} 天提醒！");
+                        continue;
+                    }
+
+                    if (reminder.LastDueOccurrence != occurrence && now >= occurrence)
+                    {
+                        reminder.LastDueOccurrence = occurrence;
+                        NotifyAndSave(reminder, now, $"提醒时间已到 ({reminder.Title})！");
+                    }
                 }
             }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isChecking, 0);
         }
     }
 

@@ -18,6 +18,7 @@ public partial class MainWindow : Window
 {
     private AppSettings _settings = new();
     private DispatcherTimer? _autoLockTimer;
+    private readonly IHotkeyRegistrationBackend _hotkeyBackend = new MultiGlobalHotkeyRegistrationBackend();
 
     // Phase 49: Lazy View Instantiation for view loading optimization
     private readonly Lazy<HomeView> _homeView = new(() => new HomeView());
@@ -119,26 +120,35 @@ public partial class MainWindow : Window
     // Phase 17: Multi-key combination hotkey re-registration without restart
     public void RegisterDynamicHotkeys()
     {
-        try
+        var result = TryApplyHotkeyConfiguration(_settings);
+        if (!result.Success)
         {
-            MultiGlobalHotkeyService.UnregisterAll();
-
-            var mw = _settings.MainWindowHotkey ?? new HotkeyBinding((uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Alt), Key.D);
-            MultiGlobalHotkeyService.RegisterHotkey("Main Window", mw.Modifiers, (uint)KeyInterop.VirtualKeyFromKey(mw.Key), () => ShowWindow());
-
-            var ai = _settings.AiQuickHotkey ?? new HotkeyBinding((uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Shift), Key.Space);
-            MultiGlobalHotkeyService.RegisterHotkey("AI Quick Search", ai.Modifiers, (uint)KeyInterop.VirtualKeyFromKey(ai.Key), () => ShowAiQuickWindow());
-
-            var cmd = _settings.CommandPaletteHotkey ?? new HotkeyBinding((uint)HotkeyModifiers.Ctrl, Key.K);
-            MultiGlobalHotkeyService.RegisterHotkey("Command Palette", cmd.Modifiers, (uint)KeyInterop.VirtualKeyFromKey(cmd.Key), () => ShowCommandPalette());
-
-            var clip = _settings.ClipboardAiHotkey ?? new HotkeyBinding((uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Shift), Key.A);
-            MultiGlobalHotkeyService.RegisterHotkey("Clipboard AI", clip.Modifiers, (uint)KeyInterop.VirtualKeyFromKey(clip.Key), () => ShowClipboardAi());
+            AppDataPath.LogError("MainWindow.RegisterDynamicHotkeys", new InvalidOperationException(result.ErrorMessage));
         }
-        catch (Exception ex)
+    }
+
+    public HotkeyApplyResult TryApplyHotkeyConfiguration(AppSettings candidate)
+    {
+        var actions = new Dictionary<string, Action>
         {
-            AppDataPath.LogError("MainWindow.RegisterDynamicHotkeys", ex);
+            ["Main Window"] = ShowWindow,
+            ["AI Quick Search"] = ShowAiQuickWindow,
+            ["Command Palette"] = ShowCommandPalette,
+            ["Clipboard AI"] = ShowClipboardAi
+        };
+
+        var result = HotkeyConfigurationTransaction.TryApply(
+            _settings,
+            candidate,
+            _hotkeyBackend,
+            actions,
+            SettingsService.SaveSettings);
+        if (result.Success)
+        {
+            _settings = candidate;
         }
+
+        return result;
     }
 
     private bool? RunSetupWizard()

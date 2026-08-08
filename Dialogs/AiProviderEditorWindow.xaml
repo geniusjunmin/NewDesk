@@ -44,10 +44,12 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <PasswordBox x:Name="ApiKeyPasswordBox" Margin="0,0,8,0"/>
                             <TextBox x:Name="ApiKeyTextBox" Visibility="Collapsed" Margin="0,0,8,0"/>
                             <ToggleButton x:Name="ShowKeyToggle" Grid.Column="1" Content="👁 显示" Padding="8,4" Click="ShowKeyToggle_Click"/>
+                            <Button Grid.Column="2" Content="清除 API Key" Style="{StaticResource DangerButton}" Padding="8,4" Margin="8,0,0,0" Click="ClearApiKeyButton_Click"/>
                         </Grid>
 
                         <TextBlock Text="模型 (Model ID)：" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,4"/>

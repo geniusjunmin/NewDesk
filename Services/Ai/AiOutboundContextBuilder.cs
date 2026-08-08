@@ -20,7 +20,7 @@ public static class AiOutboundContextBuilder
                 Role = msg.Role,
                 Content = SecretRedactor.Redact(msg.Content ?? string.Empty),
                 ToolCallId = msg.ToolCallId,
-                ToolCalls = msg.ToolCalls?.Select(tc => new AiToolCall
+                ToolCalls = msg.ToolCalls.Select(tc => new AiToolCall
                 {
                     Id = tc.Id,
                     Name = tc.Name,

@@ -87,10 +87,11 @@ public class AppSettings
     public bool AllowAiPasswordMetadata { get; set; } = false;
     public bool AllowAiLogAnalysis { get; set; } = false;
     public bool AllowAiClipboard { get; set; } = false;
+    public bool AllowAiSystemInfo { get; set; } = false;
     public bool AllowCloudFallback { get; set; } = false;
     public bool AllowBackgroundCloudRequests { get; set; } = false;
 
-    public string LastRunVersion { get; set; } = "2.2.1";
+    public string LastRunVersion { get; set; } = "2.2.4";
 
     public AppSettings()
     {

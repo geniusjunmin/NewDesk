@@ -51,61 +51,60 @@ public static class AiToolArgumentValidator
 
     private static ToolValidationResult ValidateReminderArguments(JsonElement root)
     {
-        string title = root.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+        string title = root.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String
+            ? t.GetString() ?? ""
+            : "";
         if (string.IsNullOrWhiteSpace(title))
             return ToolValidationResult.Fail("提醒标题 (title) 不能为空。");
 
-        string scheduleType = root.TryGetProperty("scheduleType", out var st) ? st.GetString() ?? "OneTime" : "OneTime";
+        if (!root.TryGetProperty("scheduleType", out var st) || st.ValueKind != JsonValueKind.String)
+            return ToolValidationResult.Fail("必须指定提醒类型 (scheduleType)。");
+
+        string scheduleType = st.GetString() ?? "";
+        if (scheduleType is not ("OneTime" or "Yearly" or "LunarYearly"))
+            return ToolValidationResult.Fail($"未知提醒类型 (scheduleType): '{scheduleType}'。");
 
         if (scheduleType == "OneTime")
         {
             if (!root.TryGetProperty("dueAt", out var dueElem) || dueElem.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(dueElem.GetString()))
-            {
-                // Fallback check if month and day are supplied
-                if (!root.TryGetProperty("month", out _) || !root.TryGetProperty("day", out _))
-                {
-                    return ToolValidationResult.Fail("一次性提醒 (OneTime) 必须指定到期时间 (dueAt)。");
-                }
-            }
+                return ToolValidationResult.Fail("一次性提醒 (OneTime) 必须指定到期时间 (dueAt)。");
 
-            if (root.TryGetProperty("dueAt", out var dueVal) && dueVal.ValueKind == JsonValueKind.String)
-            {
-                string dueStr = dueVal.GetString() ?? "";
-                if (!string.IsNullOrEmpty(dueStr) && !DateTime.TryParse(dueStr, out _))
-                {
-                    return ToolValidationResult.Fail($"到期时间 (dueAt) '{dueStr}' 不是有效的日期格式。");
-                }
-            }
+            string dueStr = dueElem.GetString()!;
+            if (!DateTime.TryParse(dueStr, out var dueAt))
+                return ToolValidationResult.Fail($"到期时间 (dueAt) '{dueStr}' 不是有效的日期格式。");
+            if (dueAt <= DateTime.Now)
+                return ToolValidationResult.Fail("一次性提醒的到期时间 (dueAt) 必须晚于当前时间。");
         }
-        else if (scheduleType == "Yearly" || scheduleType == "LunarYearly")
+        else
         {
-            if (!root.TryGetProperty("month", out var mElem) || mElem.ValueKind != JsonValueKind.Number)
-            {
-                return ToolValidationResult.Fail("每年提醒 (Yearly / LunarYearly) 必须指定月份 (month)。");
-            }
-            if (!root.TryGetProperty("day", out var dElem) || dElem.ValueKind != JsonValueKind.Number)
-            {
-                return ToolValidationResult.Fail("每年提醒 (Yearly / LunarYearly) 必须指定日期 (day)。");
-            }
-
-            int month = mElem.GetInt32();
-            int day = dElem.GetInt32();
+            if (!root.TryGetProperty("month", out var mElem) || !mElem.TryGetInt32(out int month))
+                return ToolValidationResult.Fail("每年提醒必须指定整数月份 (month)。");
+            if (!root.TryGetProperty("day", out var dElem) || !dElem.TryGetInt32(out int day))
+                return ToolValidationResult.Fail("每年提醒必须指定整数日期 (day)。");
 
             if (month < 1 || month > 12)
             {
                 return ToolValidationResult.Fail($"提醒月份 (month) '{month}' 超出 1-12 范围。");
             }
 
-            int maxDaysInMonth = DateTime.DaysInMonth(2024, month); // Leap year reference
-            if (day < 1 || day > maxDaysInMonth)
+            int maxDay = scheduleType == "LunarYearly" ? 30 : DateTime.DaysInMonth(2024, month);
+            if (day < 1 || day > maxDay)
             {
-                return ToolValidationResult.Fail($"提醒日期 (day) '{day}' 对于 {month} 月无效 (最大 {maxDaysInMonth} 天)。");
+                return ToolValidationResult.Fail($"提醒日期 (day) '{day}' 对于该类型无效（最大 {maxDay} 天）。");
             }
         }
 
-        if (root.TryGetProperty("daysInAdvance", out var advElem) && advElem.ValueKind == JsonValueKind.Number)
+        if (root.TryGetProperty("time", out var timeElem) &&
+            (timeElem.ValueKind != JsonValueKind.String ||
+             !ReminderTimeParser.TryParseClockTime(timeElem.GetString(), out _)))
         {
-            int advance = advElem.GetInt32();
+            return ToolValidationResult.Fail("提醒时间 (time) 必须是 H:mm 或 HH:mm，且位于 00:00-23:59。");
+        }
+
+        if (root.TryGetProperty("daysInAdvance", out var advElem))
+        {
+            if (!advElem.TryGetInt32(out int advance))
+                return ToolValidationResult.Fail("提前提醒天数 (daysInAdvance) 必须是整数。");
             if (advance < 0)
                 return ToolValidationResult.Fail("提前提醒天数 (daysInAdvance) 不能为负数。");
         }

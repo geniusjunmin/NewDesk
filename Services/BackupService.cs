@@ -18,14 +18,17 @@ public class BackupFileEntry
 
 public class BackupManifest
 {
-    public string BackupVersion { get; set; } = "2.2.3";
-    public string AppVersion { get; set; } = "2.2.3";
+    public string BackupVersion { get; set; } = BackupService.CurrentBackupVersion;
+    public string AppVersion { get; set; } = AppVersionService.Version;
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public List<BackupFileEntry> Files { get; set; } = new();
+    public List<string> ExcludedData { get; set; } = ["Secrets/*", "ai_conversations.dat"];
+    public MigrationState SchemaVersions { get; set; } = new();
 }
 
 public static class BackupService
 {
+    public const string CurrentBackupVersion = "2.2.4";
     private static readonly HashSet<string> WhitelistedDataFiles = new(StringComparer.OrdinalIgnoreCase)
     {
         "app_settings.json",
@@ -34,7 +37,6 @@ public static class BackupService
         "wallpapers.json",
         "dynamic_sources.json",
         "ai_providers.json",
-        "ai_conversations.json",
         "migration_state.json"
     };
 
@@ -54,7 +56,8 @@ public static class BackupService
             var manifest = new BackupManifest
             {
                 AppVersion = AppVersionService.Version,
-                CreatedAt = DateTime.Now
+                CreatedAt = DateTime.Now,
+                SchemaVersions = MigrationService.LoadMigrationState()
             };
 
             string[] filesToBackup = new[]
@@ -64,8 +67,7 @@ public static class BackupService
                 AppDataPath.RemindersFile,
                 AppDataPath.WallpapersFile,
                 AppDataPath.DynamicDataFile,
-                AppDataPath.AiProvidersFile,
-                AppDataPath.AiConversationsFile
+                AppDataPath.AiProvidersFile
             };
 
             foreach (var filePath in filesToBackup)
@@ -183,10 +185,19 @@ public static class BackupService
                 throw new InvalidDataException("manifest.json 解析失败。");
             }
 
+            ValidateBackupVersion(manifest.BackupVersion);
+
+            string stagingRoot = Path.GetFullPath(stagingDir) + Path.DirectorySeparatorChar;
+            var canonicalPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             // 4. Validate presence, file size, and SHA256 hash of every manifest entry
             foreach (var entry in manifest.Files)
             {
-                string stagedFilePath = Path.Combine(stagingDir, entry.FileName.Replace('/', Path.DirectorySeparatorChar));
+                string stagedFilePath = GetCanonicalManifestPath(stagingRoot, entry.FileName);
+                if (!canonicalPaths.Add(stagedFilePath))
+                {
+                    throw new InvalidDataException($"备份包清单包含重复路径 '{entry.FileName}'。");
+                }
                 if (!File.Exists(stagedFilePath))
                 {
                     throw new InvalidDataException($"备份包损坏: 缺失清单文件 '{entry.FileName}'。");
@@ -216,7 +227,6 @@ public static class BackupService
                 RestoreDataFileIfExists(dataDir, "wallpapers.json", AppDataPath.WallpapersFile);
                 RestoreDataFileIfExists(dataDir, "dynamic_sources.json", AppDataPath.DynamicDataFile);
                 RestoreDataFileIfExists(dataDir, "ai_providers.json", AppDataPath.AiProvidersFile);
-                RestoreDataFileIfExists(dataDir, "ai_conversations.json", AppDataPath.AiConversationsFile);
             }
 
             string assetsDir = Path.Combine(stagingDir, "assets");
@@ -235,6 +245,12 @@ public static class BackupService
                 }
             }
 
+            var migrationResult = MigrationService.ReconcileAfterRestore(manifest.SchemaVersions);
+            if (!migrationResult.Success)
+            {
+                throw new InvalidDataException($"恢复后的数据迁移失败: {string.Join(", ", migrationResult.FailedDomains)}");
+            }
+
             return true;
         }
         finally
@@ -245,6 +261,34 @@ public static class BackupService
             }
             catch { }
         }
+    }
+
+    private static void ValidateBackupVersion(string backupVersion)
+    {
+        if (!Version.TryParse(backupVersion, out var parsed) || !Version.TryParse(CurrentBackupVersion, out var current))
+        {
+            throw new InvalidDataException($"不支持的备份版本 '{backupVersion}'。");
+        }
+        if (parsed > current)
+        {
+            throw new InvalidDataException("该备份由更新版本 NewDesk 创建。");
+        }
+    }
+
+    private static string GetCanonicalManifestPath(string stagingRoot, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName) || Path.IsPathRooted(fileName) || fileName.StartsWith("\\\\", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException($"备份包清单包含非法根路径 '{fileName}'。");
+        }
+
+        string candidate = Path.GetFullPath(Path.Combine(stagingRoot, fileName.Replace('/', Path.DirectorySeparatorChar)));
+        if (!candidate.StartsWith(stagingRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException($"备份包清单路径越界 '{fileName}'。");
+        }
+
+        return candidate;
     }
 
     private static void RestoreDataFileIfExists(string sourceDir, string fileName, string targetPath)

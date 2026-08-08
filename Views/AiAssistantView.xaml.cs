@@ -21,6 +21,7 @@ public partial class AiAssistantView : UserControl
     private AiProviderConfig? _currentProviderConfig;
     private CancellationTokenSource? _streamCts;
     private bool _isGenerating = false;
+    private bool _restoringConversation;
 
     public AiAssistantView()
     {
@@ -63,11 +64,13 @@ public partial class AiAssistantView : UserControl
         if (ProviderComboBox.SelectedIndex < providers.Count)
         {
             _currentProviderConfig = providers[ProviderComboBox.SelectedIndex];
-            if (_currentConversation != null && _currentProviderConfig != null)
+            if (_currentConversation != null && _currentProviderConfig != null && !_restoringConversation)
             {
                 _currentConversation.ProviderId = _currentProviderConfig.ProviderId;
                 _currentConversation.ModelId = _currentProviderConfig.SelectedModel;
             }
+            ProviderStatusText.Text = string.Empty;
+            SendButton.IsEnabled = true;
             UpdateBadge();
         }
     }
@@ -111,14 +114,29 @@ public partial class AiAssistantView : UserControl
             if (!string.IsNullOrEmpty(conv.ProviderId))
             {
                 var providers = AiProviderRegistry.GetAllProviders().Where(p => p.IsEnabled).ToList();
-                int idx = providers.FindIndex(p => p.ProviderId == conv.ProviderId);
-                if (idx >= 0)
+                var selection = AiConversationSelection.Resolve(conv, providers);
+                if (selection.Provider != null)
                 {
-                    ProviderComboBox.SelectedIndex = idx;
+                    int idx = providers.FindIndex(p => p.ProviderId == selection.Provider.ProviderId);
+                    _restoringConversation = true;
+                    try
+                    {
+                        _currentProviderConfig = selection.Provider;
+                        ProviderComboBox.SelectedIndex = idx;
+                    }
+                    finally
+                    {
+                        _restoringConversation = false;
+                    }
+                    ProviderStatusText.Text = string.Empty;
+                    SendButton.IsEnabled = selection.CanSend;
                 }
                 else
                 {
-                    ToastManager.Show("AI 服务提示", "原 AI 服务已删除，请选择新的 AI 服务。", ToastType.Warning);
+                    _currentProviderConfig = null;
+                    ProviderComboBox.SelectedIndex = -1;
+                    SendButton.IsEnabled = false;
+                    ProviderStatusText.Text = selection.StatusMessage;
                 }
             }
 
@@ -223,6 +241,11 @@ public partial class AiAssistantView : UserControl
         };
         panel.Children.Add(contentText);
 
+        foreach (var toolEvent in msg.ToolEvents)
+        {
+            panel.Children.Add(CreateToolBadge(toolEvent));
+        }
+
         border.Child = panel;
         MessagesStackPanel.Children.Add(border);
     }
@@ -259,7 +282,10 @@ public partial class AiAssistantView : UserControl
         }
 
         _currentConversation.ProviderId = _currentProviderConfig.ProviderId;
-        _currentConversation.ModelId = _currentProviderConfig.SelectedModel;
+        if (string.IsNullOrEmpty(_currentConversation.ModelId))
+        {
+            _currentConversation.ModelId = _currentProviderConfig.SelectedModel;
+        }
 
         InputTextBox.Text = string.Empty;
 
@@ -316,36 +342,28 @@ public partial class AiAssistantView : UserControl
                 UserPrompt = prompt,
                 ConversationHistory = historyForModel,
                 PreferredProvider = _currentProviderConfig,
+                ModelOverride = _currentConversation.ModelId,
                 DataSensitivity = DataSensitivity.Personal,
                 DataCategories = AiDataCategory.UserPrompt,
                 RequestedContextCategories = AiDataCategory.Reminder | AiDataCategory.Wallpaper,
-                ConfirmationCallback = async pending =>
+                EnableTools = true,
+                AllowedToolNames = new(StringComparer.OrdinalIgnoreCase)
+                {
+                    "create_reminder", "switch_wallpaper", "get_system_info"
+                },
+                ConfirmationCallback = pending =>
                 {
                     var confirmDialog = new Dialogs.ConfirmDialog("AI 工具操作请求", pending.HumanReadablePreview)
                     {
                         Owner = Window.GetWindow(this)
                     };
-                    return confirmDialog.ShowDialog() == true;
+                    return Task.FromResult(confirmDialog.ShowDialog() == true);
                 },
                 CloudConsentCallback = preview => CloudConsentService.ShowInteractiveConsentAsync(Window.GetWindow(this), preview),
                 ToolExecutionProgress = new Progress<ToolExecutionDisplayInfo>(info =>
                 {
-                    var toolBadge = new Border
-                    {
-                        Background = (Brush)FindResource("SurfaceBackground"),
-                        BorderBrush = (Brush)FindResource("BorderBrush"),
-                        BorderThickness = new Thickness(1),
-                        CornerRadius = new CornerRadius(8),
-                        Padding = new Thickness(8, 6, 8, 6),
-                        Margin = new Thickness(0, 4, 0, 4)
-                    };
-                    var tb = new TextBlock
-                    {
-                        Text = $"{info.Icon} {info.Title} · {info.Detail}",
-                        FontSize = 12,
-                        Foreground = (Brush)FindResource("TextSecondaryBrush")
-                    };
-                    toolBadge.Child = tb;
+                    aiMsg.ToolEvents.Add(info);
+                    var toolBadge = CreateToolBadge(info);
                     aiPanel.Children.Insert(aiPanel.Children.Count - 1, toolBadge);
                 })
             };
@@ -384,11 +402,30 @@ public partial class AiAssistantView : UserControl
         finally
         {
             _isGenerating = false;
-            SendButton.IsEnabled = true;
+            SendButton.IsEnabled = _currentProviderConfig != null;
             StopButton.Visibility = Visibility.Collapsed;
             _streamCts?.Dispose();
             _streamCts = null;
         }
+    }
+
+    private Border CreateToolBadge(ToolExecutionDisplayInfo info)
+    {
+        return new Border
+        {
+            Background = (Brush)FindResource("SurfaceBackground"),
+            BorderBrush = (Brush)FindResource("BorderBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(8, 6, 8, 6),
+            Margin = new Thickness(0, 4, 0, 4),
+            Child = new TextBlock
+            {
+                Text = $"{info.Icon} {info.Title} · {info.Detail}",
+                FontSize = 12,
+                Foreground = (Brush)FindResource("TextSecondaryBrush")
+            }
+        };
     }
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
