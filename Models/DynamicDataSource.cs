@@ -29,12 +29,14 @@ public class DynamicDataSource
     public string FormatPrefix { get; set; } = string.Empty;
     public string FormatSuffix { get; set; } = string.Empty;
 
-    // AI Text Source Config (Phase 50, 51)
+    // AI Text Source Config
     public string? AiProviderId { get; set; }
     public string? AiModelId { get; set; }
     public string? AiPrompt { get; set; }
+    public bool AllowBackgroundCloudRequests { get; set; } = false;
 
-    // Cache & Error State (Phase 18)
+    // Refresh & Cache Config
+    public int RefreshIntervalMinutes { get; set; } = 0; // 0 = Manual
     public int CacheTtlMinutes { get; set; } = 15;
     public string? LastCachedValue { get; set; }
     public DateTime? LastCachedTime { get; set; }

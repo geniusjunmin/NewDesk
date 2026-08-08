@@ -58,7 +58,7 @@ public static class NaturalLanguageReminderParser
         }
 
         // 3. Check for Time of Day ("下午3点", "下午15:30", "上午9点", "15:00", "8:30")
-        var timeMatch = Regex.Match(text, @"(上午|下午|早上|晚上|中午)?\s*(\d{1,2})[:：点](\d{1,2})?\s*(分|点)?");
+        var timeMatch = Regex.Match(title, @"(上午|下午|早上|晚上|中午)?\s*(\d{1,2})[:：点](\d{1,2})?\s*(分|点)?");
         if (timeMatch.Success)
         {
             string period = timeMatch.Groups[1].Value;
@@ -82,6 +82,7 @@ public static class NaturalLanguageReminderParser
                 if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59)
                 {
                     targetTime = new TimeSpan(hour, minute, 0);
+                    title = title.Replace(timeMatch.Value, "").Trim();
                 }
             }
         }

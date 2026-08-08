@@ -34,56 +34,46 @@ public static class ReminderService
         foreach (var reminder in _reminders.ToList())
         {
             if (reminder.IsCompleted) continue;
-            if (reminder.SnoozeUntil.HasValue && reminder.SnoozeUntil.Value > now) continue;
 
-            bool shouldNotify = false;
-            switch (_frequency)
+            // Handle Snooze
+            if (reminder.SnoozeUntil.HasValue)
             {
-                case ReminderFrequency.OnceADay:
-                    if (reminder.LastNotifiedDate.Date != now.Date) shouldNotify = true;
-                    break;
-                case ReminderFrequency.Hourly:
-                    if (reminder.LastNotifiedDate.Date != now.Date || reminder.LastNotifiedDate.Hour != now.Hour) shouldNotify = true;
-                    break;
-                case ReminderFrequency.HalfHourly:
-                    if (reminder.LastNotifiedDate.Date != now.Date || reminder.LastNotifiedDate.Hour != now.Hour || (now.Minute >= 30 && reminder.LastNotifiedDate.Minute < 30) || (now.Minute < 30 && reminder.LastNotifiedDate.Minute >= 30)) shouldNotify = true;
-                    break;
-                case ReminderFrequency.Minutely:
-                    shouldNotify = true;
-                    break;
+                if (now < reminder.SnoozeUntil.Value)
+                {
+                    continue;
+                }
+                else
+                {
+                    // Trigger Snooze Notification once and clear snooze state
+                    reminder.SnoozeUntil = null;
+                    NotifyAndSave(reminder, now, "Snooze 提醒时间已到！");
+                    continue;
+                }
             }
-
-            if (!shouldNotify) continue;
 
             if (reminder.ScheduleType == ReminderScheduleType.OneTime && reminder.DueAt.HasValue)
             {
                 DateTime due = reminder.DueAt.Value;
-                DateTime triggerStart = due.AddDays(-reminder.DaysInAdvance);
 
-                if (now >= triggerStart)
+                // 1. Check Advance Notification
+                if (reminder.DaysInAdvance > 0 && reminder.AdvanceNotifiedAt == null)
                 {
-                    bool isFinalDue = now >= due;
-                    if (Application.Current != null)
+                    DateTime advanceStart = due.AddDays(-reminder.DaysInAdvance);
+                    if (now >= advanceStart && now < due)
                     {
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            ShowReminderToast(reminder);
-                            reminder.LastNotifiedDate = now;
-                            if (isFinalDue)
-                            {
-                                reminder.IsCompleted = true;
-                            }
-                            DataService.SaveReminders(_reminders);
-                        });
+                        reminder.AdvanceNotifiedAt = now;
+                        NotifyAndSave(reminder, now, $"提前 {reminder.DaysInAdvance} 天提醒！");
+                        continue;
                     }
-                    else
-                    {
-                        reminder.LastNotifiedDate = now;
-                        if (isFinalDue)
-                        {
-                            reminder.IsCompleted = true;
-                        }
-                    }
+                }
+
+                // 2. Check Final Due Notification
+                if (reminder.DueNotifiedAt == null && now >= due)
+                {
+                    reminder.DueNotifiedAt = now;
+                    reminder.IsCompleted = true;
+                    NotifyAndSave(reminder, now, "提醒时间已到！");
+                    continue;
                 }
             }
             else
@@ -92,29 +82,39 @@ public static class ReminderService
 
                 if (now.Date >= reminder.NextReminderDate.AddDays(-reminder.DaysInAdvance))
                 {
-                    if (Application.Current != null)
-                    {
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            ShowReminderToast(reminder);
-                            reminder.LastNotifiedDate = now;
-                            DataService.SaveReminders(_reminders);
-                        });
-                    }
-                    else
+                    if (reminder.LastNotifiedDate.Date != now.Date)
                     {
                         reminder.LastNotifiedDate = now;
+                        NotifyAndSave(reminder, now, $"今天是 {reminder.NextReminderDate:yyyy-MM-dd}！");
                     }
                 }
             }
         }
     }
 
-    private static void ShowReminderToast(Reminder reminder)
+    private static void NotifyAndSave(Reminder reminder, DateTime now, string statusText)
+    {
+        reminder.LastNotifiedDate = now;
+
+        if (Application.Current != null)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                ShowReminderToast(reminder, statusText);
+                DataService.SaveReminders(_reminders);
+            });
+        }
+        else
+        {
+            DataService.SaveReminders(_reminders);
+        }
+    }
+
+    private static void ShowReminderToast(Reminder reminder, string statusText)
     {
         string message = reminder.DueAt.HasValue
-            ? $"提醒时间: {reminder.DueAt.Value:yyyy-MM-dd HH:mm}"
-            : $"今天是 {reminder.NextReminderDate:yyyy-MM-dd}！";
+            ? $"[{statusText}] 设定时间: {reminder.DueAt.Value:yyyy-MM-dd HH:mm}"
+            : $"[{statusText}] 目标日期: {reminder.NextReminderDate:yyyy-MM-dd}";
 
         var toast = new ReminderToastWindow(reminder.Title, message, autoClose: false);
         toast.Show();

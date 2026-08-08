@@ -8,6 +8,7 @@ using NewDesk.Dialogs;
 using NewDesk.Models;
 using NewDesk.Models.Ai;
 using NewDesk.Services;
+using NewDesk.Services.Security;
 using ThemeMode = NewDesk.Models.ThemeMode;
 
 namespace NewDesk.Views;
@@ -65,6 +66,25 @@ public partial class SettingsView : UserControl
             ThemeSystemRadio.IsChecked = _settings.Theme == ThemeMode.System;
             ThemeLightRadio.IsChecked = _settings.Theme == ThemeMode.Light;
             ThemeDarkRadio.IsChecked = _settings.Theme == ThemeMode.Dark;
+
+            // AI Network Mode & Privacy (Phase 16)
+            NetworkModeLocalRadio.IsChecked = _settings.AiNetworkMode == AiNetworkMode.LocalOnly;
+            NetworkModeAskRadio.IsChecked = _settings.AiNetworkMode == AiNetworkMode.AskBeforeCloud;
+            NetworkModeAllowRadio.IsChecked = _settings.AiNetworkMode == AiNetworkMode.AllowCloud;
+
+            AllowReminderContextCheckBox.IsChecked = _settings.AllowAiReminderContext;
+            AllowWallpaperContextCheckBox.IsChecked = _settings.AllowAiWallpaperContext;
+            AllowDynamicDataContextCheckBox.IsChecked = _settings.AllowAiDynamicDataContext;
+            AllowPasswordMetadataCheckBox.IsChecked = _settings.AllowAiPasswordMetadata;
+            AllowLogsCheckBox.IsChecked = _settings.AllowAiLogAnalysis;
+            AllowClipboardCheckBox.IsChecked = _settings.AllowAiClipboard;
+            AllowBackgroundCloudCheckBox.IsChecked = _settings.AllowBackgroundCloudRequests;
+
+            // Hotkey Bindings Display (Phase 17)
+            TxtMainWindowHotkey.Text = _settings.MainWindowHotkey?.ToString() ?? "Ctrl + Alt + D";
+            TxtAiQuickHotkey.Text = _settings.AiQuickHotkey?.ToString() ?? "Ctrl + Shift + Space";
+            TxtCommandPaletteHotkey.Text = _settings.CommandPaletteHotkey?.ToString() ?? "Ctrl + K";
+            TxtClipboardAiHotkey.Text = _settings.ClipboardAiHotkey?.ToString() ?? "Ctrl + Shift + A";
 
             LoadAiProvidersList();
         }
@@ -189,6 +209,19 @@ public partial class SettingsView : UserControl
         _settings.EnableWallpaper = EnableWallpaperCheckBox.IsChecked == true;
         _settings.EnableDynamicInfo = EnableDynamicInfoCheckBox.IsChecked == true;
 
+        // AI Privacy Network Mode & Toggles (Phase 16)
+        if (NetworkModeLocalRadio.IsChecked == true) _settings.AiNetworkMode = AiNetworkMode.LocalOnly;
+        else if (NetworkModeAskRadio.IsChecked == true) _settings.AiNetworkMode = AiNetworkMode.AskBeforeCloud;
+        else if (NetworkModeAllowRadio.IsChecked == true) _settings.AiNetworkMode = AiNetworkMode.AllowCloud;
+
+        _settings.AllowAiReminderContext = AllowReminderContextCheckBox.IsChecked == true;
+        _settings.AllowAiWallpaperContext = AllowWallpaperContextCheckBox.IsChecked == true;
+        _settings.AllowAiDynamicDataContext = AllowDynamicDataContextCheckBox.IsChecked == true;
+        _settings.AllowAiPasswordMetadata = AllowPasswordMetadataCheckBox.IsChecked == true;
+        _settings.AllowAiLogAnalysis = AllowLogsCheckBox.IsChecked == true;
+        _settings.AllowAiClipboard = AllowClipboardCheckBox.IsChecked == true;
+        _settings.AllowBackgroundCloudRequests = AllowBackgroundCloudCheckBox.IsChecked == true;
+
         SettingsService.SaveSettings(_settings);
     }
 
@@ -212,9 +245,46 @@ public partial class SettingsView : UserControl
         ThemeManager.ApplyTheme(mode);
     }
 
-    private void RebindHotkeyButton_Click(object sender, RoutedEventArgs e)
+    // Phase 17: Interactive Hotkey Re-binding
+    private void RebindHotkey_Click(object sender, RoutedEventArgs e)
     {
-        ToastManager.Show("快捷键说明", "全局快捷键目前默认设为 Ctrl + Alt + D，可以快捷显示或隐藏 NewDesk 主窗口。", ToastType.Info);
+        if (sender is Button btn && btn.Tag is string targetHotkey)
+        {
+            var dlg = new HotkeyCaptureDialog { Owner = Window.GetWindow(this) };
+            if (dlg.ShowDialog() == true && dlg.CapturedBinding != null)
+            {
+                var binding = dlg.CapturedBinding;
+                switch (targetHotkey)
+                {
+                    case "MainWindow":
+                        _settings.MainWindowHotkey = binding;
+                        TxtMainWindowHotkey.Text = binding.ToString();
+                        break;
+                    case "AiQuick":
+                        _settings.AiQuickHotkey = binding;
+                        TxtAiQuickHotkey.Text = binding.ToString();
+                        break;
+                    case "CommandPalette":
+                        _settings.CommandPaletteHotkey = binding;
+                        TxtCommandPaletteHotkey.Text = binding.ToString();
+                        break;
+                    case "ClipboardAi":
+                        _settings.ClipboardAiHotkey = binding;
+                        TxtClipboardAiHotkey.Text = binding.ToString();
+                        break;
+                }
+
+                SettingsService.SaveSettings(_settings);
+
+                // Notify MainWindow to re-register hotkeys dynamically without app restart
+                if (Application.Current.MainWindow is MainWindow mw)
+                {
+                    mw.RegisterDynamicHotkeys();
+                }
+
+                ToastManager.Show("快捷键保存", "快捷键已实时重置生效！", ToastType.Success);
+            }
+        }
     }
 
     private void SendTestNotificationButton_Click(object sender, RoutedEventArgs e)
@@ -249,34 +319,21 @@ public partial class SettingsView : UserControl
         }
     }
 
+    // Phase 18: Portable Backup Integration via BackupService
     private void ExportBackupButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
             var dialog = new SaveFileDialog
             {
-                Filter = "JSON 文件|*.json",
-                FileName = $"NewDesk_Backup_{DateTime.Now:yyyyMMdd_HHmmss}.json"
+                Filter = "NewDesk 备份包 (*.ndbackup)|*.ndbackup|ZIP 压缩包 (*.zip)|*.zip",
+                FileName = $"NewDesk_Backup_{DateTime.Now:yyyyMMdd_HHmmss}.ndbackup"
             };
 
             if (dialog.ShowDialog() == true)
             {
-                var settingsJson = File.Exists(AppDataPath.SettingsFile) ? File.ReadAllText(AppDataPath.SettingsFile) : "{}";
-                var passwordsJson = File.Exists(AppDataPath.PasswordsFile) ? File.ReadAllText(AppDataPath.PasswordsFile) : "{}";
-                var remindersJson = File.Exists(AppDataPath.RemindersFile) ? File.ReadAllText(AppDataPath.RemindersFile) : "[]";
-
-                var backupObj = new
-                {
-                    ExportTime = DateTime.Now,
-                    Settings = settingsJson,
-                    Passwords = passwordsJson,
-                    Reminders = remindersJson
-                };
-
-                string backupJsonStr = System.Text.Json.JsonSerializer.Serialize(backupObj, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(dialog.FileName, backupJsonStr);
-
-                ToastManager.Show("成功", "所有数据已成功导出为备份文件！", ToastType.Success);
+                BackupService.CreateBackup(dialog.FileName);
+                ToastManager.Show("便携备份", "完整配置与图片资源已打包导出！", ToastType.Success);
             }
         }
         catch (Exception ex)
@@ -289,32 +346,26 @@ public partial class SettingsView : UserControl
     {
         try
         {
+            var confirm = new ConfirmDialog("导入便携备份", "导入将用备份数据替换当前配置。导入前系统将自动生成恢复快照。确定要继续吗？")
+            {
+                Owner = Window.GetWindow(this)
+            };
+
+            if (confirm.ShowDialog() != true) return;
+
             var dialog = new OpenFileDialog
             {
-                Filter = "JSON 文件|*.json"
+                Filter = "NewDesk 备份包 (*.ndbackup;*.zip)|*.ndbackup;*.zip"
             };
 
             if (dialog.ShowDialog() == true)
             {
-                string text = File.ReadAllText(dialog.FileName);
-                using var doc = System.Text.Json.JsonDocument.Parse(text);
-                var root = doc.RootElement;
-
-                if (root.TryGetProperty("Settings", out var settingsProp))
+                bool success = BackupService.RestoreBackup(dialog.FileName);
+                if (success)
                 {
-                    File.WriteAllText(AppDataPath.SettingsFile, settingsProp.GetString() ?? "");
+                    LoadSettingsUI();
+                    ToastManager.Show("导入成功", "数据与资源已恢复！请注意：AI API Key 不包含在便携备份中，如需使用请重新配置。", ToastType.Success);
                 }
-                if (root.TryGetProperty("Passwords", out var passwordsProp))
-                {
-                    File.WriteAllText(AppDataPath.PasswordsFile, passwordsProp.GetString() ?? "");
-                }
-                if (root.TryGetProperty("Reminders", out var remindersProp))
-                {
-                    File.WriteAllText(AppDataPath.RemindersFile, remindersProp.GetString() ?? "");
-                }
-
-                LoadSettingsUI();
-                ToastManager.Show("成功", "数据已成功从备份恢复！", ToastType.Success);
             }
         }
         catch (Exception ex)

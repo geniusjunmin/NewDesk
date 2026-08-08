@@ -91,13 +91,24 @@ public partial class AiQuickWindow : Window
                 UserPrompt = prompt,
                 PreferredProvider = defaultProvider,
                 TaskProfile = AiTaskProfile.FastCommand,
-                DataSensitivity = DataSensitivity.Personal
+                DataSensitivity = DataSensitivity.Personal,
+                DataCategories = AiDataCategory.UserPrompt | AiDataCategory.Reminder | AiDataCategory.Wallpaper,
+                CloudConsentCallback = preview => CloudConsentService.ShowInteractiveConsentAsync(this, preview),
+                ConfirmationCallback = async pending =>
+                {
+                    var dlg = new Dialogs.ConfirmDialog("AI 工具操作请求", pending.HumanReadablePreview)
+                    {
+                        Owner = this
+                    };
+                    return dlg.ShowDialog() == true;
+                }
             };
 
             var progress = new Progress<AiStreamChunk>(chunk =>
             {
                 if (!string.IsNullOrEmpty(chunk.TextDelta))
                 {
+                    if (ResultTextBlock.Text.StartsWith("⟳")) ResultTextBlock.Text = "";
                     ResultTextBlock.Text += chunk.TextDelta;
                     ResultScrollViewer.ScrollToEnd();
                 }
@@ -105,7 +116,7 @@ public partial class AiQuickWindow : Window
 
             ResultTextBlock.Text = "";
             var finalResp = await AiOrchestrator.ExecuteTurnAsync(turnRequest, progress, _streamCts.Token);
-            if (string.IsNullOrEmpty(ResultTextBlock.Text) && !string.IsNullOrEmpty(finalResp.Content))
+            if (!string.IsNullOrEmpty(finalResp.Content))
             {
                 ResultTextBlock.Text = finalResp.Content;
             }

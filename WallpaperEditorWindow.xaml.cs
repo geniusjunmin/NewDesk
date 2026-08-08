@@ -35,6 +35,7 @@ public partial class WallpaperEditorWindow : Window
     private Point _dragStartPoint;
     private double _dragStartElementX;
     private double _dragStartElementY;
+    private UIElement? _draggedVisualElement;
 
     public WallpaperEditorWindow() : this(null)
     {
@@ -93,22 +94,7 @@ public partial class WallpaperEditorWindow : Window
 
     private void LoadWallpapersList()
     {
-        string path = AppDataPath.WallpapersFile;
-        if (!File.Exists(path) && File.Exists(Path.Combine(AppContext.BaseDirectory, "wallpapers.json")))
-        {
-            path = Path.Combine(AppContext.BaseDirectory, "wallpapers.json");
-        }
-
-        if (File.Exists(path))
-        {
-            string json = File.ReadAllText(path);
-            _wallpapers = JsonSerializer.Deserialize<List<WallpaperState>>(json) ?? new List<WallpaperState>();
-        }
-        else
-        {
-            _wallpapers = new List<WallpaperState>();
-        }
-
+        _wallpapers = WallpaperService.LoadWallpapers();
         FilterWallpaperList();
     }
 
@@ -155,19 +141,20 @@ public partial class WallpaperEditorWindow : Window
         WallpaperListBox.SelectedItem = state;
         _undoManager.Clear();
 
-        // Load Canvas Background
-        if (!string.IsNullOrEmpty(state.BackgroundImagePath) && File.Exists(state.BackgroundImagePath))
+        // Phase 21: Resolve asset path with fallback
+        string resolvedPath = WallpaperService.ResolveAssetPath(state.BackgroundImagePath, state.BackgroundAssetId);
+
+        if (!string.IsNullOrEmpty(resolvedPath) && File.Exists(resolvedPath))
         {
             try
             {
                 var bmp = new BitmapImage();
                 bmp.BeginInit();
                 bmp.CacheOption = BitmapCacheOption.OnLoad;
-                bmp.UriSource = new Uri(state.BackgroundImagePath);
+                bmp.UriSource = new Uri(resolvedPath);
                 bmp.EndInit();
                 BackgroundImage.Source = bmp;
 
-                // Adjust Design Bounds
                 if (state.DesignWidth <= 0 || state.DesignHeight <= 0)
                 {
                     state.DesignWidth = bmp.PixelWidth > 0 ? bmp.PixelWidth : 1920;
@@ -184,7 +171,6 @@ public partial class WallpaperEditorWindow : Window
             BackgroundImage.Source = null;
         }
 
-        // Set Canvas dimensions based on DesignWidth / DesignHeight
         CanvasBorder.Width = _currentWallpaper.DesignWidth;
         CanvasBorder.Height = _currentWallpaper.DesignHeight;
         MainCanvas.Width = _currentWallpaper.DesignWidth;
@@ -212,7 +198,8 @@ public partial class WallpaperEditorWindow : Window
         MainCanvas.Children.Clear();
         MainCanvas.Children.Add(SelectionBorder);
 
-        foreach (var element in _currentWallpaper.TextElements.OrderBy(e => e.ZIndex))
+        // Phase 23: Omit invisible elements
+        foreach (var element in _currentWallpaper.TextElements.Where(e => e.IsVisible).OrderBy(e => e.ZIndex))
         {
             var textBlock = CreateTextBlockForElement(element);
             Canvas.SetLeft(textBlock, element.X);
@@ -223,7 +210,12 @@ public partial class WallpaperEditorWindow : Window
             {
                 e.Handled = true;
                 SelectElement(element);
-                StartElementDrag(e);
+
+                // Phase 23: Reject drag if element is locked
+                if (!element.IsLocked)
+                {
+                    StartElementDrag(e, textBlock);
+                }
             };
 
             MainCanvas.Children.Add(textBlock);
@@ -235,10 +227,7 @@ public partial class WallpaperEditorWindow : Window
 
     private TextBlock CreateTextBlockForElement(TextElementState element)
     {
-        string text = element.Text;
-        if (element.DynamicType == "GregorianDate") text = DateTime.Now.ToString(string.IsNullOrEmpty(element.DateFormat) ? "yyyy-MM-dd" : element.DateFormat);
-        else if (element.DynamicType == "LunarDate") text = "农历 八月十五";
-        else if (element.DynamicType == "DayOfWeek") text = DateTime.Now.ToString("dddd");
+        string text = WallpaperTextRenderer.GetRenderText(element, DynamicDataService.LoadSources());
 
         Color color;
         try { color = (Color)ColorConverter.ConvertFromString(element.Color); }
@@ -252,7 +241,7 @@ public partial class WallpaperEditorWindow : Window
             Foreground = new SolidColorBrush(color),
             FontWeight = element.Bold ? FontWeights.Bold : FontWeights.Normal,
             FontStyle = element.Italic ? FontStyles.Italic : FontStyles.Normal,
-            Cursor = Cursors.SizeAll,
+            Cursor = element.IsLocked ? Cursors.Arrow : Cursors.SizeAll,
             Tag = element
         };
 
@@ -280,7 +269,7 @@ public partial class WallpaperEditorWindow : Window
 
     private void UpdateSelectionBorder()
     {
-        if (_selectedElement == null || _isPreviewMode)
+        if (_selectedElement == null || !_selectedElement.IsVisible || _isPreviewMode)
         {
             SelectionBorder.Visibility = Visibility.Collapsed;
             return;
@@ -313,11 +302,12 @@ public partial class WallpaperEditorWindow : Window
         }
     }
 
-    private void StartElementDrag(MouseButtonEventArgs e)
+    private void StartElementDrag(MouseButtonEventArgs e, UIElement visualElement)
     {
-        if (_selectedElement == null || _isPreviewMode) return;
+        if (_selectedElement == null || _selectedElement.IsLocked || _isPreviewMode) return;
 
         _isDraggingElement = true;
+        _draggedVisualElement = visualElement;
         _dragStartPoint = e.GetPosition(MainCanvas);
         _dragStartElementX = _selectedElement.X;
         _dragStartElementY = _selectedElement.Y;
@@ -328,22 +318,28 @@ public partial class WallpaperEditorWindow : Window
         MainCanvas.MouseLeftButtonUp += MainCanvas_MouseLeftButtonUp;
     }
 
+    // Phase 24: Direct visual positioning on MouseMove without full canvas re-renders!
     private void MainCanvas_MouseMove(object sender, MouseEventArgs e)
     {
-        if (_isDraggingElement && _selectedElement != null)
+        if (_isDraggingElement && _selectedElement != null && _draggedVisualElement != null)
         {
             Point current = e.GetPosition(MainCanvas);
             double deltaX = current.X - _dragStartPoint.X;
             double deltaY = current.Y - _dragStartPoint.Y;
 
-            _selectedElement.X = Math.Max(0, _dragStartElementX + deltaX);
-            _selectedElement.Y = Math.Max(0, _dragStartElementY + deltaY);
+            double newX = Math.Max(0, _dragStartElementX + deltaX);
+            double newY = Math.Max(0, _dragStartElementY + deltaY);
 
-            PositionXTextBox.Text = Math.Round(_selectedElement.X).ToString();
-            PositionYTextBox.Text = Math.Round(_selectedElement.Y).ToString();
+            _selectedElement.X = newX;
+            _selectedElement.Y = newY;
 
-            RenderCanvasElements();
-            MarkDirty();
+            Canvas.SetLeft(_draggedVisualElement, newX);
+            Canvas.SetTop(_draggedVisualElement, newY);
+            Canvas.SetLeft(SelectionBorder, newX - 4);
+            Canvas.SetTop(SelectionBorder, newY - 4);
+
+            PositionXTextBox.Text = Math.Round(newX).ToString();
+            PositionYTextBox.Text = Math.Round(newY).ToString();
         }
     }
 
@@ -352,9 +348,11 @@ public partial class WallpaperEditorWindow : Window
         if (_isDraggingElement)
         {
             _isDraggingElement = false;
+            _draggedVisualElement = null;
             Mouse.Capture(null);
             MainCanvas.MouseMove -= MainCanvas_MouseMove;
             MainCanvas.MouseLeftButtonUp -= MainCanvas_MouseLeftButtonUp;
+            MarkDirty();
         }
     }
 
@@ -451,23 +449,27 @@ public partial class WallpaperEditorWindow : Window
         });
     }
 
+    // Phase 22: Dynamic Data Source Picker
     private void AddApiDataButton_Click(object sender, RoutedEventArgs e)
     {
-        var element = new TextElementState
+        var sources = DynamicDataService.LoadSources();
+        if (sources.Count == 0)
         {
-            Text = "{API数据}",
-            DynamicType = "Api",
+            ToastManager.Show("无可用的数据源", "请先在【API 动态信息】模块中添加至少一个数据源。", ToastType.Info);
+            return;
+        }
+
+        var source = sources[0];
+        AddElement(new TextElementState
+        {
+            Text = $"{{{source.Name}}}",
+            DynamicType = "DataSource",
+            DataSourceId = source.Id,
             X = 100,
             Y = 280,
             FontSize = 48,
             Color = "#10B981"
-        };
-
-        var wizard = new ApiDataWizardWindow(element) { Owner = this };
-        if (wizard.ShowDialog() == true)
-        {
-            AddElement(element);
-        }
+        });
     }
 
     private void AddCustomTextButton_Click(object sender, RoutedEventArgs e)
@@ -538,17 +540,22 @@ public partial class WallpaperEditorWindow : Window
         SaveCurrentWallpaper();
     }
 
+    // Phase 27: Save wallpapers via WallpaperService
     private void SaveCurrentWallpaper()
     {
         try
         {
-            string path = AppDataPath.WallpapersFile;
-            string json = JsonSerializer.Serialize(_wallpapers, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(path, json);
-
-            _isDirty = false;
-            UpdateWindowTitle();
-            ToastManager.Show("保存成功", "壁纸配置已保存！", ToastType.Success);
+            var res = WallpaperService.SaveWallpapers(_wallpapers);
+            if (res.IsSuccess)
+            {
+                _isDirty = false;
+                UpdateWindowTitle();
+                ToastManager.Show("保存成功", "壁纸配置已保存！", ToastType.Success);
+            }
+            else
+            {
+                ToastManager.Show("保存错误", res.Message, ToastType.Error);
+            }
         }
         catch (Exception ex)
         {
@@ -576,6 +583,7 @@ public partial class WallpaperEditorWindow : Window
         }
     }
 
+    // Phase 20 & 21: Import background image with WallpaperService.SaveWallpaperAsset
     private void ImportImageButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -587,13 +595,14 @@ public partial class WallpaperEditorWindow : Window
 
             if (dialog.ShowDialog() == true)
             {
-                string name = Path.GetFileNameWithoutExtension(dialog.FileName);
+                string assetId = WallpaperService.SaveWallpaperAsset(dialog.FileName);
+                string assetPath = WallpaperService.GetAssetPath(assetId);
 
                 double width = 1920;
                 double height = 1080;
                 try
                 {
-                    var bmp = BitmapFrame.Create(new Uri(dialog.FileName), BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+                    var bmp = BitmapFrame.Create(new Uri(assetPath), BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
                     if (bmp.PixelWidth > 0 && bmp.PixelHeight > 0)
                     {
                         width = bmp.PixelWidth;
@@ -602,10 +611,12 @@ public partial class WallpaperEditorWindow : Window
                 }
                 catch { }
 
+                string name = Path.GetFileNameWithoutExtension(dialog.FileName);
                 var newState = new WallpaperState
                 {
                     Name = name,
-                    BackgroundImagePath = dialog.FileName,
+                    BackgroundImagePath = assetPath,
+                    BackgroundAssetId = assetId,
                     DesignWidth = width,
                     DesignHeight = height
                 };
@@ -710,11 +721,19 @@ public partial class WallpaperEditorWindow : Window
         }
     }
 
+    // Phase 25: Exact alignment math using element size measurement
+    private (double Width, double Height) GetElementSize(TextElementState elem)
+    {
+        var tb = CreateTextBlockForElement(elem);
+        tb.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        return (tb.DesiredSize.Width, tb.DesiredSize.Height);
+    }
+
     private void QuickAlignLeft_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedElement == null) return;
         PushUndoSnapshot();
-        _selectedElement.X = 50;
+        _selectedElement.X = 0;
         RenderCanvasElements();
         UpdatePropertiesPanel();
         MarkDirty();
@@ -724,7 +743,8 @@ public partial class WallpaperEditorWindow : Window
     {
         if (_selectedElement == null || _currentWallpaper == null) return;
         PushUndoSnapshot();
-        _selectedElement.X = _currentWallpaper.DesignWidth / 2 - 100;
+        var (w, _) = GetElementSize(_selectedElement);
+        _selectedElement.X = Math.Max(0, (_currentWallpaper.DesignWidth - w) / 2);
         RenderCanvasElements();
         UpdatePropertiesPanel();
         MarkDirty();
@@ -734,7 +754,8 @@ public partial class WallpaperEditorWindow : Window
     {
         if (_selectedElement == null || _currentWallpaper == null) return;
         PushUndoSnapshot();
-        _selectedElement.X = _currentWallpaper.DesignWidth - 250;
+        var (w, _) = GetElementSize(_selectedElement);
+        _selectedElement.X = Math.Max(0, _currentWallpaper.DesignWidth - w);
         RenderCanvasElements();
         UpdatePropertiesPanel();
         MarkDirty();
@@ -744,7 +765,7 @@ public partial class WallpaperEditorWindow : Window
     {
         if (_selectedElement == null) return;
         PushUndoSnapshot();
-        _selectedElement.Y = 50;
+        _selectedElement.Y = 0;
         RenderCanvasElements();
         UpdatePropertiesPanel();
         MarkDirty();
@@ -754,7 +775,8 @@ public partial class WallpaperEditorWindow : Window
     {
         if (_selectedElement == null || _currentWallpaper == null) return;
         PushUndoSnapshot();
-        _selectedElement.Y = _currentWallpaper.DesignHeight / 2 - 30;
+        var (_, h) = GetElementSize(_selectedElement);
+        _selectedElement.Y = Math.Max(0, (_currentWallpaper.DesignHeight - h) / 2);
         RenderCanvasElements();
         UpdatePropertiesPanel();
         MarkDirty();
@@ -764,7 +786,8 @@ public partial class WallpaperEditorWindow : Window
     {
         if (_selectedElement == null || _currentWallpaper == null) return;
         PushUndoSnapshot();
-        _selectedElement.Y = _currentWallpaper.DesignHeight - 100;
+        var (_, h) = GetElementSize(_selectedElement);
+        _selectedElement.Y = Math.Max(0, _currentWallpaper.DesignHeight - h);
         RenderCanvasElements();
         UpdatePropertiesPanel();
         MarkDirty();
@@ -955,6 +978,7 @@ public partial class WallpaperEditorWindow : Window
                 {
                     Name = $"{targetState.Name} (副本)",
                     BackgroundImagePath = targetState.BackgroundImagePath,
+                    BackgroundAssetId = targetState.BackgroundAssetId,
                     DesignWidth = targetState.DesignWidth,
                     DesignHeight = targetState.DesignHeight,
                     TextElements = targetState.TextElements.Select(elem => elem.Clone()).ToList()
@@ -1034,7 +1058,7 @@ public partial class WallpaperEditorWindow : Window
             DeleteElementButton_Click(sender, e);
             e.Handled = true;
         }
-        else if (_selectedElement != null)
+        else if (_selectedElement != null && !_selectedElement.IsLocked)
         {
             double step = Keyboard.Modifiers == ModifierKeys.Shift ? 10 : 1;
             if (e.Key == Key.Left) { _selectedElement.X = Math.Max(0, _selectedElement.X - step); e.Handled = true; }

@@ -53,16 +53,18 @@ public static class WallpaperService
         return GetDefaultPresets();
     }
 
-    public static void SaveWallpapers(List<WallpaperState> wallpapers)
+    public static OperationResult SaveWallpapers(List<WallpaperState> wallpapers)
     {
         try
         {
             string json = JsonSerializer.Serialize(wallpapers, new JsonSerializerOptions { WriteIndented = true });
             SafeFileWriter.WriteAllText(AppDataPath.WallpapersFile, json);
+            return OperationResult.Success("壁纸配置保存成功。");
         }
         catch (Exception ex)
         {
             AppDataPath.LogError("WallpaperService.SaveWallpapers", ex);
+            return OperationResult.Fail($"壁纸配置保存失败: {ex.Message}", ex);
         }
     }
 
@@ -76,18 +78,41 @@ public static class WallpaperService
             Directory.CreateDirectory(assetsDir);
 
             string ext = Path.GetExtension(sourceFilePath);
-            string assetFileName = $"{Guid.NewGuid():N}{ext}";
-            string destPath = Path.Combine(assetsDir, assetFileName);
+            string assetId = $"{Guid.NewGuid():N}{ext}";
+            string destPath = Path.Combine(assetsDir, assetId);
 
             byte[] data = File.ReadAllBytes(sourceFilePath);
             SafeFileWriter.WriteAllBytes(destPath, data);
-            return destPath;
+            return assetId;
         }
         catch (Exception ex)
         {
             AppDataPath.LogError("WallpaperService.SaveWallpaperAsset", ex);
             return sourceFilePath;
         }
+    }
+
+    public static string GetAssetPath(string assetId)
+    {
+        if (string.IsNullOrEmpty(assetId)) return string.Empty;
+        if (Path.IsPathRooted(assetId)) return assetId;
+        return Path.Combine(AppDataPath.DataFolder, "Wallpapers", "Assets", assetId);
+    }
+
+    public static string ResolveAssetPath(string? path, string? assetId)
+    {
+        if (!string.IsNullOrEmpty(assetId))
+        {
+            string assetPath = GetAssetPath(assetId);
+            if (File.Exists(assetPath)) return assetPath;
+        }
+
+        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+        {
+            return path;
+        }
+
+        return string.Empty;
     }
 
     public static void InitializeDisplaySettingsListener()
@@ -227,6 +252,8 @@ public static class WallpaperService
             dataResults[kvp.Key] = kvp.Value.Result;
         }
 
+        string bgPath = ResolveAssetPath(state.BackgroundImagePath, state.BackgroundAssetId);
+
         // 2. Render and Set Desktop Wallpaper
         await Application.Current.Dispatcher.InvokeAsync(async () =>
         {
@@ -255,9 +282,9 @@ public static class WallpaperService
 
                     using (var dc = drawingVisual.RenderOpen())
                     {
-                        if (!string.IsNullOrEmpty(state.BackgroundImagePath) && File.Exists(state.BackgroundImagePath))
+                        if (!string.IsNullOrEmpty(bgPath) && File.Exists(bgPath))
                         {
-                            var originalImage = BitmapFrame.Create(new Uri(state.BackgroundImagePath), BitmapCreateOptions.IgnoreImageCache, BitmapCacheOption.OnLoad);
+                            var originalImage = BitmapFrame.Create(new Uri(bgPath), BitmapCreateOptions.IgnoreImageCache, BitmapCacheOption.OnLoad);
                             dc.DrawRectangle(new ImageBrush(originalImage) { Stretch = Stretch.UniformToFill, AlignmentX = AlignmentX.Center, AlignmentY = AlignmentY.Center }, null, new Rect(0, 0, pixelWidth, pixelHeight));
                         }
                         else dc.DrawRectangle(Brushes.Black, null, new Rect(0, 0, pixelWidth, pixelHeight));
@@ -265,7 +292,7 @@ public static class WallpaperService
                         double scaleX = state.DesignWidth > 0 ? (double)pixelWidth / state.DesignWidth : 1.0;
                         double scaleY = state.DesignHeight > 0 ? (double)pixelHeight / state.DesignHeight : 1.0;
 
-                        foreach (var element in state.TextElements)
+                        foreach (var element in state.TextElements.Where(e => e.IsVisible))
                         {
                             string dataText = "";
                             if (!string.IsNullOrEmpty(element.DataSourceId) && dataResults.TryGetValue(element.DataSourceId, out var val1))

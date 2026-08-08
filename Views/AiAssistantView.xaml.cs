@@ -168,18 +168,18 @@ public partial class AiAssistantView : UserControl
         };
         panel.Children.Add(headerText);
 
-        // Reasoning Panel if available
-        if (!string.IsNullOrEmpty(msg.ReasoningContent))
+        // Render Reasoning Summary if available (Phase 13: User facing summary only)
+        if (!string.IsNullOrEmpty(msg.ReasoningSummary))
         {
             var exp = new Expander
             {
-                Header = "🧠 思考过程 (Reasoning)",
+                Header = "💡 推理摘要",
                 IsExpanded = false,
                 Foreground = (Brush)FindResource("TextSecondaryBrush"),
                 Margin = new Thickness(0, 0, 0, 6),
                 Content = new TextBlock
                 {
-                    Text = msg.ReasoningContent,
+                    Text = msg.ReasoningSummary,
                     Style = (Style)FindResource("CaptionTextStyle"),
                     TextWrapping = TextWrapping.Wrap,
                     Margin = new Thickness(4)
@@ -235,7 +235,6 @@ public partial class AiAssistantView : UserControl
 
         InputTextBox.Text = string.Empty;
 
-        // Obtain History for Model PRIOR to adding active user and assistant messages
         var historyForModel = AiConversationService.GetTruncatedContextMessages(_currentConversation.Messages);
 
         // User Message
@@ -248,7 +247,6 @@ public partial class AiAssistantView : UserControl
         var aiMsg = new AiMessage { Role = "assistant", Content = "", Timestamp = DateTime.Now };
         _currentConversation.Messages.Add(aiMsg);
 
-        // Create UI Border for Streaming
         var aiBorder = new Border
         {
             Style = (Style)FindResource("CardStyle"),
@@ -291,6 +289,7 @@ public partial class AiAssistantView : UserControl
                 ConversationHistory = historyForModel,
                 PreferredProvider = _currentProviderConfig,
                 DataSensitivity = DataSensitivity.Personal,
+                DataCategories = AiDataCategory.UserPrompt | AiDataCategory.Reminder | AiDataCategory.Wallpaper,
                 ConfirmationCallback = async pending =>
                 {
                     var confirmDialog = new Dialogs.ConfirmDialog("AI 工具操作请求", pending.HumanReadablePreview)
@@ -299,20 +298,14 @@ public partial class AiAssistantView : UserControl
                     };
                     return confirmDialog.ShowDialog() == true;
                 },
-                CloudConsentCallback = async preview =>
-                {
-                    var dlg = new CloudAiConsentDialog(preview)
-                    {
-                        Owner = Window.GetWindow(this)
-                    };
-                    return dlg.ShowDialog() == true && dlg.IsAllowed;
-                }
+                CloudConsentCallback = preview => CloudConsentService.ShowInteractiveConsentAsync(Window.GetWindow(this), preview)
             };
 
             var progress = new Progress<AiStreamChunk>(chunk =>
             {
                 if (!string.IsNullOrEmpty(chunk.TextDelta))
                 {
+                    if (aiTextBlock.Text.StartsWith("⟳")) aiTextBlock.Text = "";
                     aiMsg.Content += chunk.TextDelta;
                     aiTextBlock.Text = aiMsg.Content;
                     MessagesScrollViewer.ScrollToEnd();
@@ -321,7 +314,7 @@ public partial class AiAssistantView : UserControl
 
             aiTextBlock.Text = "";
             var finalResp = await AiOrchestrator.ExecuteTurnAsync(turnRequest, progress, _streamCts.Token);
-            if (string.IsNullOrEmpty(aiMsg.Content) && !string.IsNullOrEmpty(finalResp.Content))
+            if (!string.IsNullOrEmpty(finalResp.Content))
             {
                 aiMsg.Content = finalResp.Content;
                 aiTextBlock.Text = aiMsg.Content;

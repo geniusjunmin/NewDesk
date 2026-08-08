@@ -10,6 +10,7 @@ using NewDesk.Models.Ai;
 using NewDesk.Services.Ai;
 using NewDesk.Services.Ai.Tools;
 using NewDesk.Services.Security;
+using NewDesk.Models.Security;
 using NewDesk.Views;
 using ThemeMode = NewDesk.Models.ThemeMode;
 
@@ -325,7 +326,6 @@ public static class AutomatedTestRunner
                     ArgumentsJson = "{\"title\":\"Test Denied\",\"month\":8,\"day\":8}"
                 };
 
-                // With NULL callback, execution MUST be denied!
                 var deniedResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, userConfirmationCallback: null);
                 if (!deniedResult.IsError || !deniedResult.OutputJson.Contains("安全防线"))
                     throw new InvalidOperationException("AiToolExecutionService failed to deny execution when confirmation callback was null!");
@@ -340,10 +340,33 @@ public static class AutomatedTestRunner
                     ArgumentsJson = "{\"title\":\"Test Accepted\",\"month\":8,\"day\":18}"
                 };
 
-                // User accepts confirmation
                 var acceptedResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, userConfirmationCallback: pending => Task.FromResult(true));
                 if (acceptedResult.IsError)
                     throw new InvalidOperationException("AiToolExecutionService failed to execute tool when user confirmed.");
+            });
+
+            RunTest("Tool Execution Display Formatting Test", () =>
+            {
+                var info = ToolExecutionDisplayInfo.Format("switch_wallpaper", "{}", true);
+                if (info.Icon != "🖼️" || !info.IsSuccess)
+                    throw new InvalidOperationException("ToolExecutionDisplayInfo failed to format switch_wallpaper.");
+
+                var remInfo = ToolExecutionDisplayInfo.Format("create_reminder", "{\"title\":\"交电费\",\"dueAt\":\"2026-08-09 15:00\"}", true);
+                if (remInfo.Icon != "🔔" || !remInfo.Detail.Contains("交电费"))
+                    throw new InvalidOperationException("ToolExecutionDisplayInfo failed to format create_reminder.");
+            });
+
+            RunTest("Endpoint Security Scheme Whitelist Test", () =>
+            {
+                try
+                {
+                    EndpointSecurityPolicy.ValidateEndpoint("ftp://api.example.com/v1", false);
+                    throw new InvalidOperationException("EndpointSecurityPolicy failed to reject non-http/https ftp protocol!");
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("不支持的 Endpoint Scheme"))
+                {
+                    // Expected behavior
+                }
             });
 
             RunTest("Dynamic Data Sources Persistence & Predefined Presets", () =>
@@ -365,7 +388,9 @@ public static class AutomatedTestRunner
                     }
                 };
 
-                DynamicDataService.SaveSources(new List<DynamicDataSource> { source });
+                var res = DynamicDataService.SaveSources(new List<DynamicDataSource> { source });
+                if (!res.IsSuccess)
+                    throw new InvalidOperationException($"DynamicDataService.SaveSources failed: {res.Message}");
 
                 if (source.Headers.ContainsKey("Authorization"))
                     throw new InvalidOperationException("Sensitive header Authorization was not automatically removed from plaintext Headers dictionary!");
@@ -402,7 +427,7 @@ public static class AutomatedTestRunner
                     throw new InvalidOperationException("https://localhost.evil.com/v1 MUST NOT be classified as Local!");
             });
 
-            RunTest("AI PrivacyGuard Network Mode Enforcement Test", () =>
+            RunTest("AI PrivacyGuard Category Flags Enforcement Test", () =>
             {
                 var settings = SettingsService.LoadSettings();
                 settings.AiNetworkMode = AiNetworkMode.LocalOnly;
@@ -416,7 +441,7 @@ public static class AutomatedTestRunner
 
                 try
                 {
-                    AiPrivacyGuard.ValidateRequest(cloudProvider, DataSensitivity.Personal, "Hello");
+                    AiPrivacyGuard.ValidateRequest(cloudProvider, DataSensitivity.Personal, AiDataCategory.UserPrompt, "Hello");
                     throw new InvalidOperationException("AiPrivacyGuard failed to block Cloud provider in LocalOnly network mode!");
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("仅限本地模型模式"))
@@ -424,16 +449,15 @@ public static class AutomatedTestRunner
                     // Expected behavior
                 }
 
-                // Restore default network mode
                 settings.AiNetworkMode = AiNetworkMode.AllowCloud;
                 SettingsService.SaveSettings(settings);
             });
 
-            RunTest("Natural Language Reminder Parsing & TimeOfDay Extensions", () =>
+            RunTest("Natural Language Reminder Parsing & Title Clean Test", () =>
             {
                 var parsed = NaturalLanguageReminderParser.Parse("明天下午3点开会");
-                if (parsed.Title != "下午3点开会")
-                    throw new InvalidOperationException($"Parsed title mismatch: {parsed.Title}");
+                if (parsed.Title != "开会")
+                    throw new InvalidOperationException($"Parsed title mismatch: Expected '开会', got '{parsed.Title}'");
 
                 parsed.SnoozeUntil = DateTime.Now.AddMinutes(15);
                 if (!parsed.SnoozeUntil.HasValue)
@@ -479,7 +503,6 @@ public static class AutomatedTestRunner
             RunTest("Wallpaper TextRenderer IsVisible Early Return Test", () =>
             {
                 var hiddenElement = new TextElementState { Text = "Hidden", IsVisible = false };
-                // Drawing hidden element should return early without throwing
             });
 
             RunTest("BackupService ZIP Creation & Restore Verification Test", () =>

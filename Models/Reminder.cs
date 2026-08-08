@@ -8,9 +8,6 @@ namespace NewDesk.Models;
 public enum ReminderScheduleType
 {
     OneTime,
-    Daily,
-    Weekly,
-    Monthly,
     Yearly,
     LunarYearly
 }
@@ -31,11 +28,13 @@ public class Reminder : INotifyPropertyChanged
     private DateTime? _snoozeUntil;
     private DateTime _createdTime = DateTime.Now;
 
-    // Reminder 2.2 Time & Schedule Extensions (Phase 47 & 48)
+    // Reminder 2.2 Time & Notification Tracking
     private DateTime? _dueAt;
     private TimeSpan? _timeOfDay;
     private string _notes = string.Empty;
     private ReminderScheduleType _scheduleType = ReminderScheduleType.OneTime;
+    private DateTime? _advanceNotifiedAt;
+    private DateTime? _dueNotifiedAt;
 
     public Guid Id { get => _id; set => SetField(ref _id, value); }
     public string Title { get => _title; set => SetField(ref _title, value); }
@@ -54,6 +53,8 @@ public class Reminder : INotifyPropertyChanged
     public TimeSpan? TimeOfDay { get => _timeOfDay; set => SetField(ref _timeOfDay, value); }
     public string Notes { get => _notes; set => SetField(ref _notes, value); }
     public ReminderScheduleType ScheduleType { get => _scheduleType; set => SetField(ref _scheduleType, value); }
+    public DateTime? AdvanceNotifiedAt { get => _advanceNotifiedAt; set => SetField(ref _advanceNotifiedAt, value); }
+    public DateTime? DueNotifiedAt { get => _dueNotifiedAt; set => SetField(ref _dueNotifiedAt, value); }
 
     public string ReminderType => IsLunar ? "农历" : "公历";
     public DateTime NextReminderDate { get; set; }

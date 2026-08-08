@@ -13,9 +13,26 @@ public enum DataSensitivity
     Secret
 }
 
+[Flags]
+public enum AiDataCategory
+{
+    None = 0,
+    UserPrompt = 1,
+    Reminder = 2,
+    Wallpaper = 4,
+    DynamicData = 8,
+    PasswordMetadata = 16,
+    Logs = 32,
+    Clipboard = 64
+}
+
 public static class AiPrivacyGuard
 {
-    public static void ValidateRequest(AiProviderConfig provider, DataSensitivity sensitivity, string rawPrompt)
+    public static void ValidateRequest(
+        AiProviderConfig provider,
+        DataSensitivity sensitivity,
+        AiDataCategory categories,
+        string rawPrompt)
     {
         var settings = SettingsService.LoadSettings();
 
@@ -33,10 +50,33 @@ public static class AiPrivacyGuard
             throw new InvalidOperationException("【隐私防护动效】当前已设定为【仅限本地模型模式】，禁止向云端 AI 发送网络请求。");
         }
 
-        // 3. Sensitive Data Classification Enforcement
-        if (sensitivity == DataSensitivity.Sensitive && !isLocal && !settings.AllowAiPasswordMetadata)
+        // 3. Category Permission Validation for Remote Endpoint
+        if (!isLocal)
         {
-            throw new InvalidOperationException("【隐私防护动效】当前设置未授权向云端发送敏感元数据。");
+            if (categories.HasFlag(AiDataCategory.Clipboard) && !settings.AllowAiClipboard)
+            {
+                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送剪贴板内容。");
+            }
+            if (categories.HasFlag(AiDataCategory.Reminder) && !settings.AllowAiReminderContext)
+            {
+                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送提醒事项上下文。");
+            }
+            if (categories.HasFlag(AiDataCategory.Wallpaper) && !settings.AllowAiWallpaperContext)
+            {
+                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送壁纸上下文。");
+            }
+            if (categories.HasFlag(AiDataCategory.DynamicData) && !settings.AllowAiDynamicDataContext)
+            {
+                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送动态数据上下文。");
+            }
+            if (categories.HasFlag(AiDataCategory.PasswordMetadata) && !settings.AllowAiPasswordMetadata)
+            {
+                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送密码元数据。");
+            }
+            if (categories.HasFlag(AiDataCategory.Logs) && !settings.AllowAiLogAnalysis)
+            {
+                throw new InvalidOperationException("【隐私防护动效】当前未授权向云端发送日志内容。");
+            }
         }
     }
 }

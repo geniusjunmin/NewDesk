@@ -8,7 +8,7 @@
             <Grid Margin="0,0,0,20">
                 <StackPanel>
                     <TextBlock Text="⚙ 系统设置" Style="{StaticResource Header1TextStyle}"/>
-                    <TextBlock Text="管理 AI 模型服务、快捷键、主题外观、安全策略与数据备份" Style="{StaticResource SubHeaderTextStyle}" Margin="0,4,0,0"/>
+                    <TextBlock Text="管理 AI 模型服务、隐私授权、快捷键、主题外观、安全策略与数据备份" Style="{StaticResource SubHeaderTextStyle}" Margin="0,4,0,0"/>
                 </StackPanel>
             </Grid>
 
@@ -62,6 +62,45 @@
                 </StackPanel>
             </Border>
 
+            <!-- Section 0.5: AI Privacy & Network Controls (Phase 16) -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="🛡️ AI 隐私与网络安全控制" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
+                    <TextBlock Text="所有本地机密（主密码、密码文段、TOTP 密钥、API Key）永远不会发送给 AI。" Style="{StaticResource CaptionTextStyle}" Foreground="#38BDF8" Margin="0,0,0,12"/>
+
+                    <TextBlock Text="网络传输模式：" Style="{StaticResource BodyTextStyle}" Margin="0,4,0,6"/>
+                    <StackPanel Margin="0,0,0,16">
+                        <RadioButton x:Name="NetworkModeLocalRadio" Content="仅限本地模型模式 (绝对阻止任何云端 API 请求)" Checked="ImmediateSave_Click" Margin="0,2"/>
+                        <RadioButton x:Name="NetworkModeAskRadio" Content="云端发送前询问 (每次发送至云端前弹出明细授权确认)" Checked="ImmediateSave_Click" Margin="0,2"/>
+                        <RadioButton x:Name="NetworkModeAllowRadio" Content="允许云端 AI (信任配置的云端 AI 模型服务)" Checked="ImmediateSave_Click" Margin="0,2"/>
+                    </StackPanel>
+
+                    <TextBlock Text="允许向 AI 提交的数据上下文：" Style="{StaticResource BodyTextStyle}" Margin="0,4,0,6"/>
+                    <Grid Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <CheckBox x:Name="AllowReminderContextCheckBox" Grid.Row="0" Grid.Column="0" Content="提醒事项上下文" Click="ImmediateSave_Click" Margin="0,4"/>
+                        <CheckBox x:Name="AllowWallpaperContextCheckBox" Grid.Row="0" Grid.Column="1" Content="当前壁纸上下文" Click="ImmediateSave_Click" Margin="0,4"/>
+
+                        <CheckBox x:Name="AllowDynamicDataContextCheckBox" Grid.Row="1" Grid.Column="0" Content="动态数据源上下文" Click="ImmediateSave_Click" Margin="0,4"/>
+                        <CheckBox x:Name="AllowPasswordMetadataCheckBox" Grid.Row="1" Grid.Column="1" Content="密码库站点元数据 (无密码)" Click="ImmediateSave_Click" Margin="0,4"/>
+
+                        <CheckBox x:Name="AllowLogsCheckBox" Grid.Row="2" Grid.Column="0" Content="系统运行日志" Click="ImmediateSave_Click" Margin="0,4"/>
+                        <CheckBox x:Name="AllowClipboardCheckBox" Grid.Row="2" Grid.Column="1" Content="剪贴板文本" Click="ImmediateSave_Click" Margin="0,4"/>
+                    </Grid>
+
+                    <CheckBox x:Name="AllowBackgroundCloudCheckBox" Content="允许后台 Cloud AI (供定时器、AI 动态数据静默更新使用)" Style="{StaticResource ToggleSwitchStyle}" Click="ImmediateSave_Click"/>
+                </StackPanel>
+            </Border>
+
             <!-- Section 1: General Settings -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
@@ -83,20 +122,53 @@
                 </StackPanel>
             </Border>
 
-            <!-- Section 2: Hotkeys -->
+            <!-- Section 2: Hotkeys (Phase 17) -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
-                    <TextBlock Text="快捷键设置" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
-                    <Grid>
+                    <TextBlock Text="⌨️ 全局快捷键配置" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
+
+                    <Grid Margin="0,4">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="显示 / 隐藏主窗口" Style="{StaticResource BodyTextStyle}"/>
-                            <TextBlock Text="快捷键：Ctrl + Alt + D" Style="{StaticResource CaptionTextStyle}" Margin="0,4,0,0"/>
-                        </StackPanel>
-                        <Button x:Name="RebindHotkeyButton" Grid.Column="1" Content="重新录制" Style="{StaticResource SecondaryButton}" Click="RebindHotkeyButton_Click"/>
+                        <TextBlock Text="显示/隐藏主窗口" VerticalAlignment="Center" Style="{StaticResource BodyTextStyle}"/>
+                        <TextBlock x:Name="TxtMainWindowHotkey" Grid.Column="1" Text="Ctrl + Alt + D" VerticalAlignment="Center" Foreground="#38BDF8" FontWeight="SemiBold"/>
+                        <Button Grid.Column="2" Content="修改" Tag="MainWindow" Style="{StaticResource SecondaryButton}" Padding="12,4" Click="RebindHotkey_Click"/>
+                    </Grid>
+
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="AI 快捷提问窗口" VerticalAlignment="Center" Style="{StaticResource BodyTextStyle}"/>
+                        <TextBlock x:Name="TxtAiQuickHotkey" Grid.Column="1" Text="Ctrl + Shift + Space" VerticalAlignment="Center" Foreground="#38BDF8" FontWeight="SemiBold"/>
+                        <Button Grid.Column="2" Content="修改" Tag="AiQuick" Style="{StaticResource SecondaryButton}" Padding="12,4" Click="RebindHotkey_Click"/>
+                    </Grid>
+
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Command Palette 命令面板" VerticalAlignment="Center" Style="{StaticResource BodyTextStyle}"/>
+                        <TextBlock x:Name="TxtCommandPaletteHotkey" Grid.Column="1" Text="Ctrl + K" VerticalAlignment="Center" Foreground="#38BDF8" FontWeight="SemiBold"/>
+                        <Button Grid.Column="2" Content="修改" Tag="CommandPalette" Style="{StaticResource SecondaryButton}" Padding="12,4" Click="RebindHotkey_Click"/>
+                    </Grid>
+
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="剪贴板 AI 悬浮窗" VerticalAlignment="Center" Style="{StaticResource BodyTextStyle}"/>
+                        <TextBlock x:Name="TxtClipboardAiHotkey" Grid.Column="1" Text="Ctrl + Shift + A" VerticalAlignment="Center" Foreground="#38BDF8" FontWeight="SemiBold"/>
+                        <Button Grid.Column="2" Content="修改" Tag="ClipboardAi" Style="{StaticResource SecondaryButton}" Padding="12,4" Click="RebindHotkey_Click"/>
                     </Grid>
                 </StackPanel>
             </Border>
@@ -194,14 +266,14 @@
             <!-- Section 7: Data & Backup -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
-                    <TextBlock Text="数据与备份" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
+                    <TextBlock Text="数据与便携备份" Style="{StaticResource Header2TextStyle}" Margin="0,0,0,12"/>
 
                     <TextBlock x:Name="DataPathText" Text="数据目录：%AppData%\NewDesk" Style="{StaticResource CaptionTextStyle}" Margin="0,0,0,12"/>
 
                     <WrapPanel Margin="0,0,0,12">
                         <Button x:Name="OpenDataFolderButton" Content="📁 打开数据目录" Style="{StaticResource SecondaryButton}" Margin="0,0,8,8" Click="OpenDataFolderButton_Click"/>
-                        <Button x:Name="ExportBackupButton" Content="📥 导出数据备份" Style="{StaticResource SecondaryButton}" Margin="0,0,8,8" Click="ExportBackupButton_Click"/>
-                        <Button x:Name="ImportBackupButton" Content="📤 导入数据备份" Style="{StaticResource SecondaryButton}" Margin="0,0,8,8" Click="ImportBackupButton_Click"/>
+                        <Button x:Name="ExportBackupButton" Content="📥 导出便携备份 (.ndbackup)" Style="{StaticResource SecondaryButton}" Margin="0,0,8,8" Click="ExportBackupButton_Click"/>
+                        <Button x:Name="ImportBackupButton" Content="📤 恢复便携备份 (.ndbackup)" Style="{StaticResource SecondaryButton}" Margin="0,0,8,8" Click="ImportBackupButton_Click"/>
                     </WrapPanel>
 
                     <Border Background="{DynamicResource SurfaceSecondaryBackground}" CornerRadius="8" Padding="12" Margin="0,8,0,0">

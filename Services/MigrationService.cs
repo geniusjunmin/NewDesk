@@ -11,12 +11,13 @@ public class MigrationState
     public int Reminders { get; set; } = 1;
     public int Wallpapers { get; set; } = 1;
     public int DynamicData { get; set; } = 1;
+    public int Passwords { get; set; } = 1;
     public int AI { get; set; } = 1;
 }
 
 public static class MigrationService
 {
-    public const int TargetSchemaVersion = 3;
+    public const int TargetSchemaVersion = 2;
     private static string StateFilePath => Path.Combine(AppDataPath.DataFolder, "migration_state.json");
 
     public static void RunAllMigrationsIfNeeded()
@@ -28,32 +29,23 @@ public static class MigrationService
 
             bool stateChanged = false;
 
-            if (state.DynamicData < TargetSchemaVersion)
+            foreach (var step in MigrationPipeline.GetSteps())
             {
-                DynamicDataService.LoadSources();
-                state.DynamicData = TargetSchemaVersion;
-                stateChanged = true;
-            }
-
-            if (state.Settings < TargetSchemaVersion)
-            {
-                SettingsService.LoadSettings();
-                state.Settings = TargetSchemaVersion;
-                stateChanged = true;
-            }
-
-            if (state.Reminders < TargetSchemaVersion)
-            {
-                DataService.LoadReminders();
-                state.Reminders = TargetSchemaVersion;
-                stateChanged = true;
-            }
-
-            if (state.Wallpapers < TargetSchemaVersion)
-            {
-                WallpaperService.LoadWallpapers();
-                state.Wallpapers = TargetSchemaVersion;
-                stateChanged = true;
+                int currentVer = GetDomainVersion(state, step.Domain);
+                if (currentVer == step.FromVersion)
+                {
+                    AppDataPath.LogInfo($"Executing migration step for {step.Domain} ({step.FromVersion} -> {step.ToVersion})");
+                    bool ok = step.Execute();
+                    if (ok)
+                    {
+                        SetDomainVersion(state, step.Domain, step.ToVersion);
+                        stateChanged = true;
+                    }
+                    else
+                    {
+                        AppDataPath.LogError($"Migration step for {step.Domain} failed. State version remaining at {currentVer}.", new Exception("Migration Failed"));
+                    }
+                }
             }
 
             if (stateChanged)
@@ -67,7 +59,31 @@ public static class MigrationService
         }
     }
 
-    private static MigrationState LoadMigrationState()
+    private static int GetDomainVersion(MigrationState state, string domain) => domain switch
+    {
+        "Settings" => state.Settings,
+        "Reminders" => state.Reminders,
+        "Wallpapers" => state.Wallpapers,
+        "DynamicData" => state.DynamicData,
+        "Passwords" => state.Passwords,
+        "AI" => state.AI,
+        _ => 1
+    };
+
+    private static void SetDomainVersion(MigrationState state, string domain, int version)
+    {
+        switch (domain)
+        {
+            case "Settings": state.Settings = version; break;
+            case "Reminders": state.Reminders = version; break;
+            case "Wallpapers": state.Wallpapers = version; break;
+            case "DynamicData": state.DynamicData = version; break;
+            case "Passwords": state.Passwords = version; break;
+            case "AI": state.AI = version; break;
+        }
+    }
+
+    public static MigrationState LoadMigrationState()
     {
         try
         {

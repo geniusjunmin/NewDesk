@@ -18,7 +18,7 @@ public static class AiToolArgumentValidator
     public static ToolValidationResult ValidateArguments(string toolName, string argumentsJson)
     {
         if (string.IsNullOrWhiteSpace(argumentsJson))
-            return ToolValidationResult.Fail("工具参数不能为空。");
+            return ToolValidationResult.Success(); // Empty parameters allowed
 
         try
         {
@@ -84,13 +84,13 @@ public static class AiToolArgumentValidator
 
     private static ToolValidationResult ValidateWallpaperArguments(JsonElement root)
     {
-        string name = root.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-        if (string.IsNullOrWhiteSpace(name))
-            return ToolValidationResult.Fail("壁纸名称 (name) 不能为空。");
-
-        // Path traversal or illegal path check
-        if (name.Contains("..") || name.Contains('/') || name.Contains('\\'))
-            return ToolValidationResult.Fail("壁纸名称包含非法路径字符。");
+        // Parameter name is optional for switch_wallpaper ({} is valid)
+        if (root.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String)
+        {
+            string name = n.GetString() ?? "";
+            if (name.Contains("..") || name.Contains('/') || name.Contains('\\'))
+                return ToolValidationResult.Fail("壁纸名称包含非法路径字符。");
+        }
 
         return ToolValidationResult.Success();
     }

@@ -30,6 +30,10 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        // Initialize AppData and run versioned migrations on startup
+        AppDataPath.Initialize();
+        MigrationService.RunAllMigrationsIfNeeded();
+
         // Ensure icon exists
         IconService.EnsureIconExists();
 

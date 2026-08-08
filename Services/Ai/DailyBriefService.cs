@@ -19,14 +19,15 @@ public static class DailyBriefService
 
         try
         {
-            string context = AiContextBroker.BuildContextPrompt();
+            string context = AiContextBroker.BuildContextPrompt(AiDataCategory.Reminder | AiDataCategory.Wallpaper).Prompt;
             string prompt = $"请根据以下桌面状态，生成一段不超过 100 字的今日晨间/日间高效生活与工作小结（语言亲切温暖）：\n{context}";
 
             var req = new AiTurnRequest
             {
                 UserPrompt = prompt,
                 TaskProfile = AiTaskProfile.GeneralChat,
-                DataSensitivity = DataSensitivity.Personal
+                DataSensitivity = DataSensitivity.Personal,
+                DataCategories = AiDataCategory.Reminder | AiDataCategory.Wallpaper
             };
 
             var resp = await AiOrchestrator.ExecuteTurnAsync(req);

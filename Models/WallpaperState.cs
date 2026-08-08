@@ -7,6 +7,7 @@ public class WallpaperState
 {
     public string Name { get; set; } = string.Empty;
     public string? BackgroundImagePath { get; set; }
+    public string? BackgroundAssetId { get; set; }
     public List<TextElementState> TextElements { get; set; } = new();
     public int RefreshIntervalMinutes { get; set; } = 0; // 0 means disabled
     public double DesignWidth { get; set; } = 1920; // Default fallback

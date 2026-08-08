@@ -14,6 +14,16 @@ using NewDesk.Services.Security;
 
 namespace NewDesk.Services;
 
+public class OperationResult
+{
+    public bool IsSuccess { get; set; } = true;
+    public string Message { get; set; } = string.Empty;
+    public Exception? Exception { get; set; }
+
+    public static OperationResult Success(string msg = "") => new OperationResult { IsSuccess = true, Message = msg };
+    public static OperationResult Fail(string msg, Exception? ex = null) => new OperationResult { IsSuccess = false, Message = msg, Exception = ex };
+}
+
 public class ExtractionResult
 {
     public bool IsSuccess { get; set; }
@@ -50,7 +60,6 @@ public static class DynamicDataService
                 SaveSources(_sources);
             }
 
-            // Immediately run migration for legacy sensitive headers
             MigrateSensitiveHeaders();
         }
         catch (Exception ex)
@@ -73,21 +82,28 @@ public static class DynamicDataService
                 if (!string.IsNullOrEmpty(rawVal) && !rawVal.StartsWith("secret://"))
                 {
                     string secretId = $"dyn_header_{src.Id}_{k.ToLowerInvariant()}";
-                    SecretStorageService.SaveSecret(secretId, rawVal);
-                    src.SecretHeaders[k] = secretId;
-                    src.Headers.Remove(k);
-                    hasChanges = true;
+                    try
+                    {
+                        SecretStorageService.SaveSecret(secretId, rawVal);
+                        src.SecretHeaders[k] = secretId;
+                        src.Headers.Remove(k);
+                        hasChanges = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        AppDataPath.LogError($"DynamicDataService.MigrateSensitiveHeaders failed for key {k}", ex);
+                    }
                 }
             }
         }
 
         if (hasChanges)
         {
-            SaveSources(_sources);
+            SaveSourcesInternal(_sources);
         }
     }
 
-    public static void SaveSources(List<DynamicDataSource> sources)
+    public static OperationResult SaveSources(List<DynamicDataSource> sources)
     {
         try
         {
@@ -108,12 +124,26 @@ public static class DynamicDataService
             }
 
             _sources = sources;
-            string json = JsonSerializer.Serialize(_sources, new JsonSerializerOptions { WriteIndented = true });
-            SafeFileWriter.WriteAllText(AppDataPath.DynamicDataFile, json);
+            return SaveSourcesInternal(_sources);
         }
         catch (Exception ex)
         {
             AppDataPath.LogError("DynamicDataService.SaveSources", ex);
+            return OperationResult.Fail($"动态数据源保存失败: {ex.Message}", ex);
+        }
+    }
+
+    private static OperationResult SaveSourcesInternal(List<DynamicDataSource> sources)
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(sources, new JsonSerializerOptions { WriteIndented = true });
+            SafeFileWriter.WriteAllText(AppDataPath.DynamicDataFile, json);
+            return OperationResult.Success("保存成功。");
+        }
+        catch (Exception ex)
+        {
+            return OperationResult.Fail($"写入数据文件失败: {ex.Message}", ex);
         }
     }
 
@@ -153,20 +183,17 @@ public static class DynamicDataService
 
     private static async Task<string> FetchHttpSourceAsync(DynamicDataSource source)
     {
-        // HTTPS Enforcement check for non-loopback endpoints transmitting secrets
         bool hasSecrets = source.SecretHeaders.Count > 0;
         EndpointSecurityPolicy.ValidateEndpoint(source.Url, hasSecrets);
 
         using var req = new HttpRequestMessage(source.Method.ToUpper() == "POST" ? HttpMethod.Post : HttpMethod.Get, source.Url);
         req.Headers.UserAgent.ParseAdd("NewDesk/2.2");
 
-        // Public Headers
         foreach (var kvp in source.Headers)
         {
             req.Headers.TryAddWithoutValidation(kvp.Key, kvp.Value);
         }
 
-        // Secret Headers from DPAPI
         foreach (var kvp in source.SecretHeaders)
         {
             string? secretVal = SecretStorageService.GetSecret(kvp.Value);
@@ -196,7 +223,7 @@ public static class DynamicDataService
         source.LastCachedTime = DateTime.Now;
         source.LastSuccessfulTime = DateTime.Now;
         source.LastError = null;
-        SaveSources(_sources);
+        SaveSourcesInternal(_sources);
 
         return finalResult;
     }
@@ -222,15 +249,17 @@ public static class DynamicDataService
             return source.LastCachedValue ?? "——";
         }
 
-        // Background Cloud AI check
         bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(provider.BaseUrl);
         var settings = SettingsService.LoadSettings();
 
-        if (!isLocal && !settings.AllowBackgroundCloudRequests)
+        if (!isLocal)
         {
-            source.LastError = "Background cloud AI requests disabled";
-            source.LastErrorTime = DateTime.Now;
-            return source.LastCachedValue ?? "——";
+            if (!source.AllowBackgroundCloudRequests || !settings.AllowBackgroundCloudRequests)
+            {
+                source.LastError = "后台云端 AI 请求未获持久授权";
+                source.LastErrorTime = DateTime.Now;
+                return source.LastCachedValue ?? "——";
+            }
         }
 
         var req = new AiTurnRequest
@@ -238,6 +267,9 @@ public static class DynamicDataService
             UserPrompt = source.AiPrompt,
             TaskProfile = AiTaskProfile.WallpaperGeneration,
             PreferredProvider = provider,
+            ModelOverride = source.AiModelId,
+            CloudRequestMode = CloudRequestMode.PreAuthorizedBackground,
+            DataCategories = AiDataCategory.DynamicData,
             DataSensitivity = DataSensitivity.Personal
         };
 
@@ -250,7 +282,7 @@ public static class DynamicDataService
             source.LastCachedTime = DateTime.Now;
             source.LastSuccessfulTime = DateTime.Now;
             source.LastError = null;
-            SaveSources(_sources);
+            SaveSourcesInternal(_sources);
             return result;
         }
 

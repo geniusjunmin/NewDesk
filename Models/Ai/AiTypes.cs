@@ -36,6 +36,11 @@ public class AiProviderCapabilities
     public bool SupportsResponsesApi { get; set; } = false;
     public bool SupportsModelListing { get; set; } = true;
     public bool IsLocal { get; set; } = false;
+
+    // Overrides
+    public bool? SupportsToolsOverride { get; set; }
+    public bool? SupportsVisionOverride { get; set; }
+    public bool? SupportsStructuredOutputOverride { get; set; }
 }
 
 public class AiProviderConfig
@@ -94,6 +99,7 @@ public class AiMessage
     public string Role { get; set; } = "user"; // "system", "user", "assistant", "tool"
     public string Content { get; set; } = string.Empty;
     public string? ReasoningContent { get; set; }
+    public string? ReasoningSummary { get; set; }
     public DateTime Timestamp { get; set; } = DateTime.Now;
     public List<AiToolCall> ToolCalls { get; set; } = new();
     public string? ToolCallId { get; set; }
@@ -135,6 +141,8 @@ public class AiResponse
     public AiUsage Usage { get; set; } = new();
     public List<AiToolCall> ToolCalls { get; set; } = new();
     public string? FinishReason { get; set; }
+    public int ToolRounds { get; set; }
+    public bool UsedTools => ToolRounds > 0;
 }
 
 public class AiStreamChunk

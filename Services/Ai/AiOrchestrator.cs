@@ -10,13 +10,23 @@ using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
 
+public enum CloudRequestMode
+{
+    Interactive,
+    PreAuthorizedBackground,
+    LocalOnly
+}
+
 public class AiTurnRequest
 {
     public AiTaskProfile TaskProfile { get; set; } = AiTaskProfile.GeneralChat;
     public string UserPrompt { get; set; } = string.Empty;
     public List<AiMessage> ConversationHistory { get; set; } = new();
     public AiProviderConfig? PreferredProvider { get; set; }
+    public string? ModelOverride { get; set; }
     public DataSensitivity DataSensitivity { get; set; } = DataSensitivity.Personal;
+    public AiDataCategory DataCategories { get; set; } = AiDataCategory.UserPrompt;
+    public CloudRequestMode CloudRequestMode { get; set; } = CloudRequestMode.Interactive;
     public Func<PendingToolAction, Task<bool>>? ConfirmationCallback { get; set; }
     public Func<CloudSendPreview, Task<bool>>? CloudConsentCallback { get; set; }
 }
@@ -48,53 +58,69 @@ public static class AiOrchestrator
             throw new InvalidOperationException("未找到可用的 AI 服务提供商，请先在【系统设置 -> AI 服务】中配置。");
         }
 
-        // 2. Privacy Guard Validation
-        string sanitizedPrompt = SecretRedactor.Redact(turnRequest.UserPrompt);
-        AiPrivacyGuard.ValidateRequest(providerConfig, turnRequest.DataSensitivity, sanitizedPrompt);
+        // 2. Pre-Send Security Endpoint Validation
+        bool hasSecrets = !string.IsNullOrEmpty(providerConfig.SecretId);
+        AiHttpSecurityGuard.ValidateRequest(providerConfig.BaseUrl, hasSecrets);
 
-        // 3. AskBeforeCloud Consent Check
+        // 3. Privacy Guard Validation
+        string sanitizedPrompt = SecretRedactor.Redact(turnRequest.UserPrompt);
+        AiPrivacyGuard.ValidateRequest(providerConfig, turnRequest.DataSensitivity, turnRequest.DataCategories, sanitizedPrompt);
+
+        // 4. Cloud Mode & Consent Handling
         var settings = SettingsService.LoadSettings();
         bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(providerConfig.BaseUrl);
 
-        if (!isLocal && settings.AiNetworkMode == AiNetworkMode.AskBeforeCloud)
+        if (turnRequest.CloudRequestMode == CloudRequestMode.LocalOnly && !isLocal)
         {
-            if (turnRequest.CloudConsentCallback == null)
+            throw new InvalidOperationException("当前请求配置为仅限本地模型模式，取消云端请求。");
+        }
+
+        if (!isLocal)
+        {
+            if (turnRequest.CloudRequestMode == CloudRequestMode.Interactive)
             {
-                throw new InvalidOperationException("当前网络模式为【云端发送前询问】，但未提供云端发送确认接口。请求已取消。");
+                if (settings.AiNetworkMode == AiNetworkMode.AskBeforeCloud)
+                {
+                    if (turnRequest.CloudConsentCallback == null)
+                    {
+                        throw new InvalidOperationException("当前网络模式为【云端发送前询问】，但未提供云端发送确认接口。请求已取消。");
+                    }
+
+                    string host = "cloud";
+                    try { host = new Uri(providerConfig.BaseUrl).Host; } catch { }
+
+                    var preview = AiOutboundPayloadPreviewBuilder.BuildPreview(
+                        providerConfig.Name,
+                        turnRequest.ModelOverride ?? providerConfig.SelectedModel,
+                        host,
+                        turnRequest.DataCategories,
+                        sanitizedPrompt);
+
+                    bool consentGranted = await turnRequest.CloudConsentCallback(preview);
+                    if (!consentGranted)
+                    {
+                        throw new InvalidOperationException("用户取消了云端 AI 发送授权。");
+                    }
+                }
             }
-
-            string host = "cloud";
-            try { host = new Uri(providerConfig.BaseUrl).Host; } catch { }
-
-            var preview = new CloudSendPreview
+            else if (turnRequest.CloudRequestMode == CloudRequestMode.PreAuthorizedBackground)
             {
-                ProviderName = providerConfig.Name,
-                Model = providerConfig.SelectedModel,
-                EndpointHost = host,
-                DataSensitivity = turnRequest.DataSensitivity,
-                IncludesReminderContext = settings.AllowAiReminderContext,
-                IncludesWallpaperContext = settings.AllowAiWallpaperContext,
-                IncludesDynamicDataContext = settings.AllowAiDynamicDataContext,
-                IncludesClipboard = settings.AllowAiClipboard,
-                SanitizedPreview = sanitizedPrompt.Length > 200 ? sanitizedPrompt[..200] + "..." : sanitizedPrompt
-            };
-
-            bool consentGranted = await turnRequest.CloudConsentCallback(preview);
-            if (!consentGranted)
-            {
-                throw new InvalidOperationException("用户取消了云端 AI 发送授权。");
+                if (!settings.AllowBackgroundCloudRequests)
+                {
+                    throw new InvalidOperationException("后台云端 AI 请求未获授权。请在设置中开启【允许后台 Cloud AI】。");
+                }
             }
         }
 
-        // 4. Inject Context
-        string contextPrompt = AiContextBroker.BuildContextPrompt();
-        string systemPrompt = string.IsNullOrEmpty(contextPrompt)
+        // 5. Inject Context
+        var contextResult = AiContextBroker.BuildContextPrompt(turnRequest.DataCategories);
+        string systemPrompt = string.IsNullOrEmpty(contextResult.Prompt)
             ? "你是一个专业、高效的 Windows 桌面 AI 助手。"
-            : $"你是一个专业、高效的 Windows 桌面 AI 助手。\n\n{contextPrompt}";
+            : $"你是一个专业、高效的 Windows 桌面 AI 助手。\n\n{contextResult.Prompt}";
 
         var provider = AiProviderFactory.CreateProvider(providerConfig);
 
-        // 5. Build Outbound Messages Payload with Redaction
+        // 6. Build Outbound Messages Payload with Redaction
         var outboundMessages = AiOutboundContextBuilder.BuildMessages(turnRequest.ConversationHistory, turnRequest.UserPrompt);
 
         var toolDefs = provider.Capabilities.SupportsTools ? AiToolRegistry.GetToolDefinitions() : null;
@@ -108,7 +134,7 @@ public static class AiOrchestrator
 
             var aiRequest = new AiRequest
             {
-                Model = providerConfig.SelectedModel,
+                Model = turnRequest.ModelOverride ?? providerConfig.SelectedModel,
                 Messages = outboundMessages,
                 SystemPrompt = systemPrompt,
                 Stream = providerConfig.Streaming && progress != null && currentRound == 1,
@@ -138,6 +164,7 @@ public static class AiOrchestrator
             }
 
             finalResponse = roundResponse;
+            finalResponse.ToolRounds = currentRound - 1;
 
             // Check if model requested tool execution
             if (roundResponse.ToolCalls.Count == 0)
@@ -145,7 +172,6 @@ public static class AiOrchestrator
                 return finalResponse;
             }
 
-            // Append assistant tool-call turn
             outboundMessages.Add(new AiMessage
             {
                 Role = "assistant",
@@ -155,7 +181,6 @@ public static class AiOrchestrator
 
             foreach (var toolCall in roundResponse.ToolCalls)
             {
-                // Validate Tool Arguments before execution
                 var validation = AiToolArgumentValidator.ValidateArguments(toolCall.Name, toolCall.ArgumentsJson);
                 AiToolResult toolResult;
 
@@ -173,7 +198,6 @@ public static class AiOrchestrator
                     toolResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, turnRequest.ConfirmationCallback);
                 }
 
-                // Redact secrets from Tool Output before submitting back to model
                 string sanitizedOutput = SecretRedactor.Redact(toolResult.OutputJson);
 
                 outboundMessages.Add(new AiMessage
@@ -187,6 +211,7 @@ public static class AiOrchestrator
 
         AppDataPath.LogInfo($"AiOrchestrator Tool Loop reached maximum safe rounds limit ({MaxToolRounds}).");
         finalResponse.Content += "\n[系统提示: AI 工具调用轮次已达到安全限制]";
+        finalResponse.ToolRounds = MaxToolRounds;
         return finalResponse;
     }
 }

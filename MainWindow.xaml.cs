@@ -1,7 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -17,17 +17,17 @@ namespace NewDesk;
 public partial class MainWindow : Window
 {
     private AppSettings _settings = new();
-    private GlobalHotkeyService? _hotkeyService;
     private DispatcherTimer? _autoLockTimer;
 
-    private readonly HomeView _homeView = new();
-    private readonly PasswordsView _passwordsView = new();
-    private readonly RemindersView _remindersView = new();
-    private readonly WallpapersView _wallpapersView = new();
-    private readonly DynamicInfoView _dynamicInfoView = new();
-    private readonly SettingsView _settingsView = new();
-    private readonly HelpView _helpView = new();
-    private readonly AiAssistantView _aiAssistantView = new();
+    // Phase 49: Lazy View Instantiation for view loading optimization
+    private readonly Lazy<HomeView> _homeView = new(() => new HomeView());
+    private readonly Lazy<PasswordsView> _passwordsView = new(() => new PasswordsView());
+    private readonly Lazy<RemindersView> _remindersView = new(() => new RemindersView());
+    private readonly Lazy<WallpapersView> _wallpapersView = new(() => new WallpapersView());
+    private readonly Lazy<DynamicInfoView> _dynamicInfoView = new(() => new DynamicInfoView());
+    private readonly Lazy<SettingsView> _settingsView = new(() => new SettingsView());
+    private readonly Lazy<HelpView> _helpView = new(() => new HelpView());
+    private readonly Lazy<AiAssistantView> _aiAssistantView = new(() => new AiAssistantView());
 
     public MainWindow()
     {
@@ -35,15 +35,8 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
 
-        // Hook Window Lock / Session Switch event
+        // Hook Session Lock / Switch event
         SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
-
-        // View event bindings
-        _homeView.RequestAddPassword += (s, e) => NavigateTo("Passwords", addPassword: true);
-        _homeView.RequestAddReminder += (s, e) => NavigateTo("Reminders", addReminder: true);
-        _homeView.RequestNavigateToWallpaper += (s, e) => NavigateTo("Wallpaper");
-
-        _settingsView.RequestRerunWizard += (s, e) => RunSetupWizard();
 
         // Key bindings (Ctrl+F, Ctrl+N, Ctrl+,)
         KeyDown += MainWindow_KeyDown;
@@ -53,14 +46,11 @@ public partial class MainWindow : Window
     {
         try
         {
-            // Initialize AppDataPath & Load settings
             AppDataPath.Initialize();
             _settings = SettingsService.LoadSettings();
 
-            // Apply Theme
             ThemeManager.ApplyTheme(_settings.Theme);
 
-            // Check First Run / Setup Wizard
             string[] args = Environment.GetCommandLineArgs();
             bool isAutostart = args.Any(a => a.Equals("--startup", StringComparison.OrdinalIgnoreCase));
 
@@ -77,6 +67,13 @@ public partial class MainWindow : Window
                 }
             }
 
+            // Hook view navigation events
+            _homeView.Value.RequestAddPassword += (s, ev) => NavigateTo("Passwords", addPassword: true);
+            _homeView.Value.RequestAddReminder += (s, ev) => NavigateTo("Reminders", addReminder: true);
+            _homeView.Value.RequestNavigateToWallpaper += (s, ev) => NavigateTo("Wallpaper");
+
+            _settingsView.Value.RequestRerunWizard += (s, ev) => RunSetupWizard();
+
             UpdateFeatureVisibility();
             NavigateTo("Home");
 
@@ -86,7 +83,6 @@ public partial class MainWindow : Window
             WallpaperService.InitializeDisplaySettingsListener();
             StartWallpaperService();
 
-            // Setup Dynamic Hotkeys from settings
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 try
@@ -120,6 +116,7 @@ public partial class MainWindow : Window
         }
     }
 
+    // Phase 17: Multi-key combination hotkey re-registration without restart
     public void RegisterDynamicHotkeys()
     {
         try
@@ -182,15 +179,15 @@ public partial class MainWindow : Window
 
         UserControl targetView = target switch
         {
-            "Home" => _homeView,
-            "Passwords" => _passwordsView,
-            "Reminders" => _remindersView,
-            "Wallpaper" => _wallpapersView,
-            "DynamicInfo" => _dynamicInfoView,
-            "AiAssistant" => _aiAssistantView,
-            "Settings" => _settingsView,
-            "Help" => _helpView,
-            _ => _homeView
+            "Home" => _homeView.Value,
+            "Passwords" => _passwordsView.Value,
+            "Reminders" => _remindersView.Value,
+            "Wallpaper" => _wallpapersView.Value,
+            "DynamicInfo" => _dynamicInfoView.Value,
+            "AiAssistant" => _aiAssistantView.Value,
+            "Settings" => _settingsView.Value,
+            "Help" => _helpView.Value,
+            _ => _homeView.Value
         };
 
         MainContentControl.Content = targetView;
@@ -211,21 +208,21 @@ public partial class MainWindow : Window
 
         if (target == "Home")
         {
-            _homeView.RefreshDashboard();
+            _homeView.Value.RefreshDashboard();
         }
         else if (target == "Passwords")
         {
-            _passwordsView.CheckVaultStateAndLoad();
-            if (addPassword) _passwordsView.ShowAddPasswordDialog();
+            _passwordsView.Value.CheckVaultStateAndLoad();
+            if (addPassword) _passwordsView.Value.ShowAddPasswordDialog();
         }
         else if (target == "Reminders")
         {
-            _remindersView.LoadReminders();
-            if (addReminder) _remindersView.ShowAddReminderDialog();
+            _remindersView.Value.LoadReminders();
+            if (addReminder) _remindersView.Value.ShowAddReminderDialog();
         }
         else if (target == "Wallpaper")
         {
-            _wallpapersView.LoadData();
+            _wallpapersView.Value.LoadData();
         }
     }
 
@@ -253,14 +250,14 @@ public partial class MainWindow : Window
             if (e.Key == Key.F)
             {
                 NavigateTo("Passwords");
-                _passwordsView.FocusSearch();
+                _passwordsView.Value.FocusSearch();
                 e.Handled = true;
             }
             else if (e.Key == Key.N)
             {
-                if (MainContentControl.Content == _passwordsView) _passwordsView.ShowAddPasswordDialog();
-                else if (MainContentControl.Content == _remindersView) _remindersView.ShowAddReminderDialog();
-                else if (MainContentControl.Content == _wallpapersView) _wallpapersView.ShowAddWallpaperDialog();
+                if (MainContentControl.Content == _passwordsView.Value) _passwordsView.Value.ShowAddPasswordDialog();
+                else if (MainContentControl.Content == _remindersView.Value) _remindersView.Value.ShowAddReminderDialog();
+                else if (MainContentControl.Content == _wallpapersView.Value) _wallpapersView.Value.ShowAddWallpaperDialog();
                 e.Handled = true;
             }
             else if (e.Key == Key.OemComma)
@@ -308,9 +305,9 @@ public partial class MainWindow : Window
     {
         DataService.MasterPassword = null;
         UpdateSidebarVaultStatus();
-        if (MainContentControl != null && MainContentControl.Content == _passwordsView)
+        if (MainContentControl != null && _passwordsView.IsValueCreated && MainContentControl.Content == _passwordsView.Value)
         {
-            _passwordsView.CheckVaultStateAndLoad();
+            _passwordsView.Value.CheckVaultStateAndLoad();
         }
     }
 
@@ -384,7 +381,7 @@ public partial class MainWindow : Window
     {
         ShowWindow();
         NavigateTo("Passwords");
-        _passwordsView.FocusSearch();
+        _passwordsView.Value.FocusSearch();
     }
 
     private void TrayAddReminder_Click(object sender, RoutedEventArgs e)
@@ -428,14 +425,12 @@ public partial class MainWindow : Window
         else
         {
             ReminderService.Stop();
-            _hotkeyService?.Dispose();
         }
     }
 
     private void Exit_Click(object sender, RoutedEventArgs e)
     {
         ReminderService.Stop();
-        _hotkeyService?.Dispose();
         Application.Current.Shutdown();
     }
 }

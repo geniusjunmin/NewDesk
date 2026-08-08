@@ -20,19 +20,17 @@ public partial class ReminderEditorWindow : Window
 
         TitleTextBox.Text = Reminder.Title;
         DaysInAdvanceTextBox.Text = Reminder.DaysInAdvance.ToString();
-        
-        // Initialize Month ComboBox
+
         for (int i = 1; i <= 12; i++)
         {
             MonthComboBox.Items.Add(i);
         }
 
         _isInitializing = false;
-        
-        // Set initial values
+
         TypeComboBox.SelectedIndex = Reminder.IsLunar ? 1 : 0;
         MonthComboBox.SelectedItem = Reminder.Month > 0 ? Reminder.Month : 1;
-        
+
         UpdateDayComboBox();
         DayComboBox.SelectedItem = Reminder.Day > 0 ? Reminder.Day : 1;
     }
@@ -98,6 +96,20 @@ public partial class ReminderEditorWindow : Window
             return;
         }
 
+        int month = (int)MonthComboBox.SelectedItem;
+        int day = (int)DayComboBox.SelectedItem;
+        bool isLunar = TypeComboBox.SelectedIndex == 1;
+
+        if (!isLunar)
+        {
+            int maxDaysInMonth = DateTime.DaysInMonth(DateTime.Now.Year, month);
+            if (day > maxDaysInMonth)
+            {
+                ToastManager.Show("日期非法", $"{month} 月最多只有 {maxDaysInMonth} 天，请重新选择！", ToastType.Warning);
+                return;
+            }
+        }
+
         if (!int.TryParse(DaysInAdvanceTextBox.Text, out int daysInAdvance) || daysInAdvance < 0)
         {
             ToastManager.Show("提示", "请输入有效的提前天数", ToastType.Warning);
@@ -105,10 +117,15 @@ public partial class ReminderEditorWindow : Window
         }
 
         Reminder.Title = TitleTextBox.Text.Trim();
-        Reminder.IsLunar = TypeComboBox.SelectedIndex == 1;
-        Reminder.Month = (int)MonthComboBox.SelectedItem;
-        Reminder.Day = (int)DayComboBox.SelectedItem;
+        Reminder.IsLunar = isLunar;
+        Reminder.Month = month;
+        Reminder.Day = day;
         Reminder.DaysInAdvance = daysInAdvance;
+
+        if (Reminder.ScheduleType == ReminderScheduleType.OneTime || !Reminder.DueAt.HasValue)
+        {
+            Reminder.DueAt = new DateTime(DateTime.Now.Year, month, day, 9, 0, 0);
+        }
 
         DialogResult = true;
     }

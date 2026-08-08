@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 using NewDesk.Models;
@@ -8,6 +10,24 @@ namespace NewDesk.Services;
 
 public static class WallpaperTextRenderer
 {
+    public static string GetRenderText(TextElementState element, List<DynamicDataSource>? sources = null)
+    {
+        if (element.DynamicType == "GregorianDate") return GetGregorianDateString(element.DateFormat);
+        if (element.DynamicType == "LunarDate") return GetLunarDateString();
+        if (element.DynamicType == "DayOfWeek") return DateTime.Now.ToString("dddd", new CultureInfo("zh-CN"));
+
+        if ((element.DynamicType == "DataSource" || !string.IsNullOrEmpty(element.DataSourceId)) && sources != null)
+        {
+            var src = sources.FirstOrDefault(s => s.Id == element.DataSourceId);
+            if (src != null && !string.IsNullOrEmpty(src.LastCachedValue))
+            {
+                return src.LastCachedValue;
+            }
+        }
+
+        return element.Text;
+    }
+
     public static void DrawElement(
         DrawingContext dc,
         TextElementState element,
