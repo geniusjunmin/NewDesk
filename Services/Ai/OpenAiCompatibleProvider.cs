@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NewDesk.Models.Ai;
+using NewDesk.Services.Ai.Protocol;
 using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
@@ -143,7 +144,7 @@ public class OpenAiCompatibleProvider : IAiProvider
 
         string content = "";
         string? reasoning = null;
-        List<AiToolCall>? toolCalls = null;
+        var toolCalls = new List<AiToolCall>();
 
         if (root.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array && choices.GetArrayLength() > 0)
         {
@@ -333,7 +334,7 @@ public class OpenAiCompatibleProvider : IAiProvider
 
         if (Capabilities.SupportsTools && request.Tools != null && request.Tools.Count > 0)
         {
-            reqBody["tools"] = request.Tools;
+            reqBody["tools"] = ChatCompletionsToolMapper.MapTools(request.Tools);
             reqBody["tool_choice"] = "auto";
         }
 

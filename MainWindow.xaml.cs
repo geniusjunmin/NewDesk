@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private readonly DynamicInfoView _dynamicInfoView = new();
     private readonly SettingsView _settingsView = new();
     private readonly HelpView _helpView = new();
+    private readonly AiAssistantView _aiAssistantView = new();
 
     public MainWindow()
     {
@@ -67,40 +68,31 @@ public partial class MainWindow : Window
             {
                 if (!DataService.AnyDataExists())
                 {
-                    // Brand new user -> Launch Setup Wizard
                     RunSetupWizard();
                 }
                 else
                 {
-                    // Existing user upgrading -> mark wizard complete
                     _settings.HasCompletedSetupWizard = true;
                     SettingsService.SaveSettings(_settings);
                 }
             }
 
-            // Navigation visibility based on feature toggles
             UpdateFeatureVisibility();
-
-            // Navigate to Home View by default
             NavigateTo("Home");
 
-            // Load Reminders & Wallpaper services
             var reminders = DataService.LoadReminders();
             ReminderService.Start(reminders, _settings.ReminderFrequency);
 
             WallpaperService.InitializeDisplaySettingsListener();
             StartWallpaperService();
 
-            // Setup Hotkey
+            // Setup Dynamic Hotkeys from settings
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 try
                 {
                     MultiGlobalHotkeyService.Initialize(this);
-                    MultiGlobalHotkeyService.RegisterHotkey("Main Window", (uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Alt), (uint)KeyInterop.VirtualKeyFromKey(Key.D), () => ShowWindow());
-                    MultiGlobalHotkeyService.RegisterHotkey("AI Quick Search", (uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Shift), (uint)KeyInterop.VirtualKeyFromKey(Key.Space), () => ShowAiQuickWindow());
-                    MultiGlobalHotkeyService.RegisterHotkey("Command Palette", (uint)HotkeyModifiers.Ctrl, (uint)KeyInterop.VirtualKeyFromKey(Key.K), () => ShowCommandPalette());
-                    MultiGlobalHotkeyService.RegisterHotkey("Clipboard AI", (uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Shift), (uint)KeyInterop.VirtualKeyFromKey(Key.A), () => ShowClipboardAi());
+                    RegisterDynamicHotkeys();
                 }
                 catch (Exception ex)
                 {
@@ -108,7 +100,6 @@ public partial class MainWindow : Window
                 }
             }), DispatcherPriority.Loaded);
 
-            // Startup Window state logic
             if (isAutostart && _settings.StartupBehavior == StartupBehavior.Tray)
             {
                 Hide();
@@ -120,13 +111,36 @@ public partial class MainWindow : Window
                 Activate();
             }
 
-            // Start Inactivity Auto-Lock Timer if configured
             ResetAutoLockTimer();
         }
         catch (Exception ex)
         {
             AppDataPath.LogError("MainWindow_Loaded", ex);
             ToastManager.Show("启动提示", $"初始化发生问题: {ex.Message}", ToastType.Warning);
+        }
+    }
+
+    public void RegisterDynamicHotkeys()
+    {
+        try
+        {
+            MultiGlobalHotkeyService.UnregisterAll();
+
+            var mw = _settings.MainWindowHotkey ?? new HotkeyBinding((uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Alt), Key.D);
+            MultiGlobalHotkeyService.RegisterHotkey("Main Window", mw.Modifiers, (uint)KeyInterop.VirtualKeyFromKey(mw.Key), () => ShowWindow());
+
+            var ai = _settings.AiQuickHotkey ?? new HotkeyBinding((uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Shift), Key.Space);
+            MultiGlobalHotkeyService.RegisterHotkey("AI Quick Search", ai.Modifiers, (uint)KeyInterop.VirtualKeyFromKey(ai.Key), () => ShowAiQuickWindow());
+
+            var cmd = _settings.CommandPaletteHotkey ?? new HotkeyBinding((uint)HotkeyModifiers.Ctrl, Key.K);
+            MultiGlobalHotkeyService.RegisterHotkey("Command Palette", cmd.Modifiers, (uint)KeyInterop.VirtualKeyFromKey(cmd.Key), () => ShowCommandPalette());
+
+            var clip = _settings.ClipboardAiHotkey ?? new HotkeyBinding((uint)(HotkeyModifiers.Ctrl | HotkeyModifiers.Shift), Key.A);
+            MultiGlobalHotkeyService.RegisterHotkey("Clipboard AI", clip.Modifiers, (uint)KeyInterop.VirtualKeyFromKey(clip.Key), () => ShowClipboardAi());
+        }
+        catch (Exception ex)
+        {
+            AppDataPath.LogError("MainWindow.RegisterDynamicHotkeys", ex);
         }
     }
 
@@ -162,8 +176,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private readonly AiAssistantView _aiAssistantView = new();
-
     public void NavigateTo(string target, bool addPassword = false, bool addReminder = false)
     {
         if (MainContentControl == null) return;
@@ -183,7 +195,6 @@ public partial class MainWindow : Window
 
         MainContentControl.Content = targetView;
 
-        // Sync RadioButton state safely
         if (NavHomeRadio != null)
         {
             if (target == "Home") NavHomeRadio.IsChecked = true;
@@ -237,7 +248,6 @@ public partial class MainWindow : Window
 
     private void MainWindow_KeyDown(object sender, KeyEventArgs e)
     {
-        // Global Keyboard UX
         if (Keyboard.Modifiers == ModifierKeys.Control)
         {
             if (e.Key == Key.F)
@@ -304,30 +314,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SetupHotkey()
-    {
-        try
-        {
-            _hotkeyService?.Unregister();
-            _hotkeyService = new GlobalHotkeyService(this);
-            _hotkeyService.Register(_settings.HotkeyModifiers, (uint)KeyInterop.VirtualKeyFromKey(_settings.Hotkey));
-        }
-        catch (Exception ex)
-        {
-            AppDataPath.LogError("SetupHotkey", ex);
-        }
-    }
-
     private void StartWallpaperService()
     {
         try
         {
             string path = AppDataPath.WallpapersFile;
-            if (!File.Exists(path) && File.Exists(Path.Combine(AppContext.BaseDirectory, "wallpapers.json")))
-            {
-                path = Path.Combine(AppContext.BaseDirectory, "wallpapers.json");
-            }
-
             if (File.Exists(path))
             {
                 string json = File.ReadAllText(path);

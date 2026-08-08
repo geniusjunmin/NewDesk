@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NewDesk.Models.Ai;
+using NewDesk.Services.Ai.Protocol;
 using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
@@ -28,6 +29,8 @@ public class ResponsesApiProvider : IAiProvider
         Config = config;
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(Math.Max(5, config.TimeoutSeconds)) };
 
+        bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(config.BaseUrl);
+
         Capabilities = new AiProviderCapabilities
         {
             SupportsStreaming = config.Streaming,
@@ -37,7 +40,7 @@ public class ResponsesApiProvider : IAiProvider
             SupportsReasoning = true,
             SupportsResponsesApi = true,
             SupportsModelListing = true,
-            IsLocal = false
+            IsLocal = isLocal
         };
     }
 
@@ -122,23 +125,38 @@ public class ResponsesApiProvider : IAiProvider
         var root = doc.RootElement;
 
         string content = "";
-        List<AiToolCall>? toolCalls = null;
+        var toolCalls = new List<AiToolCall>();
 
-        if (root.TryGetProperty("output_text", out var outText))
+        // 1. Primary: Output items array parsing
+        if (root.TryGetProperty("output", out var outputArr) && outputArr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in outputArr.EnumerateArray())
+            {
+                string itemType = item.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+                if (itemType == "message" && item.TryGetProperty("content", out var contentList) && contentList.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var c in contentList.EnumerateArray())
+                    {
+                        if (c.TryGetProperty("text", out var tElem))
+                        {
+                            content += tElem.GetString();
+                        }
+                    }
+                }
+                else if (itemType == "function_call")
+                {
+                    string callId = item.TryGetProperty("call_id", out var cid) ? cid.GetString() ?? "" : "";
+                    string name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                    string args = item.TryGetProperty("arguments", out var a) ? a.GetString() ?? "{}" : "{}";
+
+                    toolCalls.Add(new AiToolCall { Id = callId, Name = name, ArgumentsJson = args });
+                }
+            }
+        }
+        // 2. Secondary fallback: output_text
+        if (string.IsNullOrEmpty(content) && root.TryGetProperty("output_text", out var outText))
         {
             content = outText.GetString() ?? "";
-        }
-
-        if (root.TryGetProperty("function_call", out var fcElem) && fcElem.ValueKind == JsonValueKind.Object)
-        {
-            string callId = fcElem.TryGetProperty("call_id", out var cid) ? cid.GetString() ?? "" : "";
-            string name = fcElem.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-            string args = fcElem.TryGetProperty("arguments", out var a) ? a.GetString() ?? "{}" : "{}";
-
-            toolCalls = new List<AiToolCall>
-            {
-                new AiToolCall { Id = callId, Name = name, ArgumentsJson = args }
-            };
         }
 
         return new AiResponse
@@ -164,6 +182,11 @@ public class ResponsesApiProvider : IAiProvider
         using var stream = await resp.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
+        // Item ID -> (call_id, name) mapping
+        var itemMap = new Dictionary<string, (string callId, string name)>();
+        // Item ID -> arguments StringBuilder
+        var argAccumulator = new Dictionary<string, StringBuilder>();
+
         while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
         {
             string? line = await reader.ReadLineAsync(cancellationToken);
@@ -184,14 +207,78 @@ public class ResponsesApiProvider : IAiProvider
                     using var doc = JsonDocument.Parse(data);
                     var root = doc.RootElement;
 
-                    if (root.TryGetProperty("delta", out var delta))
+                    string eventType = root.TryGetProperty("type", out var typeElem) ? typeElem.GetString() ?? "" : "";
+
+                    switch (eventType)
                     {
-                        string? text = delta.TryGetProperty("text", out var tElem) ? tElem.GetString() : null;
-                        chunk = new AiStreamChunk { TextDelta = text };
-                    }
-                    else if (root.TryGetProperty("response", out var respObj) && respObj.TryGetProperty("output_text", out var outElem))
-                    {
-                        chunk = new AiStreamChunk { TextDelta = outElem.GetString() };
+                        case "response.output_item.added":
+                        case "response.output_item.done":
+                            if (root.TryGetProperty("item", out var itemElem))
+                            {
+                                string type = itemElem.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+                                string itemId = itemElem.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "";
+                                if (type == "function_call" && !string.IsNullOrEmpty(itemId))
+                                {
+                                    string callId = itemElem.TryGetProperty("call_id", out var cid) ? cid.GetString() ?? itemId : itemId;
+                                    string name = itemElem.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                                    itemMap[itemId] = (callId, name);
+                                }
+                            }
+                            break;
+
+                        case "response.output_text.delta":
+                            string deltaText = root.TryGetProperty("delta", out var dt) ? dt.GetString() ?? "" : "";
+                            chunk = new AiStreamChunk { TextDelta = deltaText };
+                            break;
+
+                        case "response.function_call_arguments.delta":
+                            string itemIdDelta = root.TryGetProperty("item_id", out var iid) ? iid.GetString() ?? "" : "";
+                            string argChunk = root.TryGetProperty("delta", out var ad) ? ad.GetString() ?? "" : "";
+                            if (!string.IsNullOrEmpty(itemIdDelta))
+                            {
+                                if (!argAccumulator.TryGetValue(itemIdDelta, out var sb))
+                                {
+                                    sb = new StringBuilder();
+                                    argAccumulator[itemIdDelta] = sb;
+                                }
+                                sb.Append(argChunk);
+                            }
+                            break;
+
+                        case "response.function_call_arguments.done":
+                            string doneItemId = root.TryGetProperty("item_id", out var iidDone) ? iidDone.GetString() ?? "" : "";
+                            string doneArgs = root.TryGetProperty("arguments", out var argDone) ? argDone.GetString() ?? "" : "";
+
+                            itemMap.TryGetValue(doneItemId, out var mapped);
+                            string finalCallId = string.IsNullOrEmpty(mapped.callId) ? doneItemId : mapped.callId;
+                            string finalName = mapped.name;
+
+                            if (argAccumulator.TryGetValue(doneItemId, out var accumulatedSb) && accumulatedSb.Length > 0)
+                            {
+                                doneArgs = accumulatedSb.ToString();
+                            }
+
+                            chunk = new AiStreamChunk
+                            {
+                                ToolCalls = new List<AiToolCall>
+                                {
+                                    new AiToolCall { Id = finalCallId, Name = finalName, ArgumentsJson = doneArgs }
+                                }
+                            };
+                            break;
+
+                        case "response.completed":
+                            chunk = new AiStreamChunk { IsDone = true };
+                            break;
+
+                        default:
+                            // Fallback generic parsing for OpenAI/proxy variations
+                            if (root.TryGetProperty("delta", out var deltaObj))
+                            {
+                                string? text = deltaObj.TryGetProperty("text", out var tElem) ? tElem.GetString() : null;
+                                chunk = new AiStreamChunk { TextDelta = text };
+                            }
+                            break;
                     }
                 }
                 catch { }
@@ -221,14 +308,16 @@ public class ResponsesApiProvider : IAiProvider
             }
             else if (msg.Role == "assistant" && msg.ToolCalls != null && msg.ToolCalls.Count > 0)
             {
-                var firstTool = msg.ToolCalls[0];
-                input.Add(new
+                foreach (var tc in msg.ToolCalls)
                 {
-                    type = "function_call",
-                    call_id = firstTool.Id,
-                    name = firstTool.Name,
-                    arguments = firstTool.ArgumentsJson
-                });
+                    input.Add(new
+                    {
+                        type = "function_call",
+                        call_id = tc.Id,
+                        name = tc.Name,
+                        arguments = tc.ArgumentsJson
+                    });
+                }
             }
             else
             {
@@ -250,7 +339,7 @@ public class ResponsesApiProvider : IAiProvider
 
         if (request.Tools != null && request.Tools.Count > 0)
         {
-            reqBody["tools"] = request.Tools;
+            reqBody["tools"] = ResponsesToolMapper.MapTools(request.Tools);
         }
 
         return reqBody;

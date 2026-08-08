@@ -7,9 +7,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using NewDesk.Dialogs;
 using NewDesk.Models.Ai;
 using NewDesk.Services;
 using NewDesk.Services.Ai;
+using NewDesk.Services.Security;
 
 namespace NewDesk.Views;
 
@@ -68,7 +70,7 @@ public partial class AiAssistantView : UserControl
     private void UpdateBadge()
     {
         if (_currentProviderConfig == null) return;
-        bool isLocal = _currentProviderConfig.Kind == AiProviderKind.Ollama || _currentProviderConfig.Kind == AiProviderKind.LMStudio || _currentProviderConfig.BaseUrl.Contains("localhost");
+        bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(_currentProviderConfig.BaseUrl);
         if (isLocal)
         {
             LocalCloudBadgeText.Text = "🏠 本地 LLM 模型";
@@ -233,6 +235,9 @@ public partial class AiAssistantView : UserControl
 
         InputTextBox.Text = string.Empty;
 
+        // Obtain History for Model PRIOR to adding active user and assistant messages
+        var historyForModel = AiConversationService.GetTruncatedContextMessages(_currentConversation.Messages);
+
         // User Message
         var userMsg = new AiMessage { Role = "user", Content = prompt, Timestamp = DateTime.Now };
         _currentConversation.Messages.Add(userMsg);
@@ -283,9 +288,7 @@ public partial class AiAssistantView : UserControl
             var turnRequest = new AiTurnRequest
             {
                 UserPrompt = prompt,
-                ConversationHistory = AiConversationService.GetTruncatedContextMessages(
-                    _currentConversation.Messages.Where(m => m.Id != userMsg.Id).ToList()
-                ),
+                ConversationHistory = historyForModel,
                 PreferredProvider = _currentProviderConfig,
                 DataSensitivity = DataSensitivity.Personal,
                 ConfirmationCallback = async pending =>
@@ -295,6 +298,14 @@ public partial class AiAssistantView : UserControl
                         Owner = Window.GetWindow(this)
                     };
                     return confirmDialog.ShowDialog() == true;
+                },
+                CloudConsentCallback = async preview =>
+                {
+                    var dlg = new CloudAiConsentDialog(preview)
+                    {
+                        Owner = Window.GetWindow(this)
+                    };
+                    return dlg.ShowDialog() == true && dlg.IsAllowed;
                 }
             };
 

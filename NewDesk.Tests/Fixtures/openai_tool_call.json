@@ -1,0 +1,22 @@
+{
+  "id": "chatcmpl-123",
+  "object": "chat.completion",
+  "created": 1677652288,
+  "model": "gpt-4o",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [{
+        "id": "call_openai_99",
+        "type": "function",
+        "function": {
+          "name": "create_reminder",
+          "arguments": "{\"title\":\"测试提醒\",\"dueAt\":\"2026-08-10T10:00:00Z\"}"
+        }
+      }]
+    },
+    "finish_reason": "tool_calls"
+  }]
+}

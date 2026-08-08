@@ -51,6 +51,24 @@ public class AiProviderConfig
     public int TimeoutSeconds { get; set; } = 300;
     public bool IsEnabled { get; set; } = true;
     public bool IsDefault { get; set; } = false;
+
+    public AiProviderConfig Clone()
+    {
+        return new AiProviderConfig
+        {
+            ProviderId = this.ProviderId,
+            Kind = this.Kind,
+            Name = this.Name,
+            BaseUrl = this.BaseUrl,
+            SecretId = this.SecretId,
+            SelectedModel = this.SelectedModel,
+            Protocol = this.Protocol,
+            Streaming = this.Streaming,
+            TimeoutSeconds = this.TimeoutSeconds,
+            IsEnabled = this.IsEnabled,
+            IsDefault = this.IsDefault
+        };
+    }
 }
 
 public class AiModelInfo
@@ -77,7 +95,7 @@ public class AiMessage
     public string Content { get; set; } = string.Empty;
     public string? ReasoningContent { get; set; }
     public DateTime Timestamp { get; set; } = DateTime.Now;
-    public List<AiToolCall>? ToolCalls { get; set; }
+    public List<AiToolCall> ToolCalls { get; set; } = new();
     public string? ToolCallId { get; set; }
 }
 
@@ -107,7 +125,7 @@ public class AiRequest
     public double Temperature { get; set; } = 0.7;
     public int MaxTokens { get; set; } = 4096;
     public bool Stream { get; set; } = true;
-    public List<AiToolDefinition>? Tools { get; set; }
+    public List<AiToolDefinition> Tools { get; set; } = new();
 }
 
 public class AiResponse
@@ -115,7 +133,7 @@ public class AiResponse
     public string Content { get; set; } = string.Empty;
     public string? ReasoningSummary { get; set; }
     public AiUsage Usage { get; set; } = new();
-    public List<AiToolCall>? ToolCalls { get; set; }
+    public List<AiToolCall> ToolCalls { get; set; } = new();
     public string? FinishReason { get; set; }
 }
 
@@ -125,7 +143,7 @@ public class AiStreamChunk
     public string? ReasoningDelta { get; set; }
     public bool IsDone { get; set; }
     public string? FinishReason { get; set; }
-    public List<AiToolCall>? ToolCalls { get; set; }
+    public List<AiToolCall> ToolCalls { get; set; } = new();
 }
 
 public class AiToolDefinition

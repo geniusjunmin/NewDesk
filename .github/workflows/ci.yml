@@ -1,0 +1,31 @@
+name: NewDesk CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 9
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore NewDesk.sln
+
+    - name: Build Solution
+      run: dotnet build NewDesk.sln -c Release --no-restore
+
+    - name: Run xUnit Tests
+      run: dotnet test NewDesk.sln -c Release --no-build
+
+    - name: Run Internal Automated Suite
+      run: dotnet run --project NewDesk.csproj -c Release --no-build -- --test

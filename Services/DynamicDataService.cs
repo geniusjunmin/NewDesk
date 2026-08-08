@@ -8,10 +8,21 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using NewDesk.Models;
 using NewDesk.Models.Ai;
+using NewDesk.Models.Security;
 using NewDesk.Services.Ai;
 using NewDesk.Services.Security;
 
 namespace NewDesk.Services;
+
+public class ExtractionResult
+{
+    public bool IsSuccess { get; set; }
+    public string Value { get; set; } = string.Empty;
+    public string ErrorMessage { get; set; } = string.Empty;
+
+    public static ExtractionResult Success(string val) => new ExtractionResult { IsSuccess = true, Value = val };
+    public static ExtractionResult Fail(string msg) => new ExtractionResult { IsSuccess = false, ErrorMessage = msg };
+}
 
 public static class DynamicDataService
 {
@@ -38,6 +49,9 @@ public static class DynamicDataService
                 _sources = GetDefaultPresets();
                 SaveSources(_sources);
             }
+
+            // Immediately run migration for legacy sensitive headers
+            MigrateSensitiveHeaders();
         }
         catch (Exception ex)
         {
@@ -47,11 +61,36 @@ public static class DynamicDataService
         return _sources;
     }
 
+    private static void MigrateSensitiveHeaders()
+    {
+        bool hasChanges = false;
+        foreach (var src in _sources)
+        {
+            var keysToMove = src.Headers.Keys.Where(k => SensitiveHeaders.Contains(k)).ToList();
+            foreach (var k in keysToMove)
+            {
+                string rawVal = src.Headers[k];
+                if (!string.IsNullOrEmpty(rawVal) && !rawVal.StartsWith("secret://"))
+                {
+                    string secretId = $"dyn_header_{src.Id}_{k.ToLowerInvariant()}";
+                    SecretStorageService.SaveSecret(secretId, rawVal);
+                    src.SecretHeaders[k] = secretId;
+                    src.Headers.Remove(k);
+                    hasChanges = true;
+                }
+            }
+        }
+
+        if (hasChanges)
+        {
+            SaveSources(_sources);
+        }
+    }
+
     public static void SaveSources(List<DynamicDataSource> sources)
     {
         try
         {
-            // Auto-detect sensitive headers and move values to DPAPI SecretStorage
             foreach (var src in sources)
             {
                 var keysToMove = src.Headers.Keys.Where(k => SensitiveHeaders.Contains(k)).ToList();
@@ -108,12 +147,16 @@ public static class DynamicDataService
             source.LastErrorTime = DateTime.Now;
             AppDataPath.LogError($"DynamicDataService.FetchValueAsync ({source.Name})", ex);
 
-            return !string.IsNullOrEmpty(source.LastCachedValue) ? source.LastCachedValue : "—";
+            return !string.IsNullOrEmpty(source.LastCachedValue) ? source.LastCachedValue : "——";
         }
     }
 
     private static async Task<string> FetchHttpSourceAsync(DynamicDataSource source)
     {
+        // HTTPS Enforcement check for non-loopback endpoints transmitting secrets
+        bool hasSecrets = source.SecretHeaders.Count > 0;
+        EndpointSecurityPolicy.ValidateEndpoint(source.Url, hasSecrets);
+
         using var req = new HttpRequestMessage(source.Method.ToUpper() == "POST" ? HttpMethod.Post : HttpMethod.Get, source.Url);
         req.Headers.UserAgent.ParseAdd("NewDesk/2.2");
 
@@ -137,9 +180,17 @@ public static class DynamicDataService
         resp.EnsureSuccessStatusCode();
 
         string rawContent = await resp.Content.ReadAsStringAsync();
-        string extractedValue = ExtractValue(rawContent, source.ExtractionType, source.ExtractionRule);
+        var extractRes = ExtractValue(rawContent, source.ExtractionType, source.ExtractionRule);
 
-        string finalResult = (source.FormatPrefix ?? "") + extractedValue + (source.FormatSuffix ?? "");
+        if (!extractRes.IsSuccess)
+        {
+            source.LastError = extractRes.ErrorMessage;
+            source.LastErrorTime = DateTime.Now;
+
+            return !string.IsNullOrEmpty(source.LastCachedValue) ? source.LastCachedValue : "——";
+        }
+
+        string finalResult = (source.FormatPrefix ?? "") + extractRes.Value + (source.FormatSuffix ?? "");
 
         source.LastCachedValue = finalResult;
         source.LastCachedTime = DateTime.Now;
@@ -154,13 +205,39 @@ public static class DynamicDataService
     {
         if (string.IsNullOrWhiteSpace(source.AiPrompt))
         {
-            return source.LastCachedValue ?? "—";
+            return source.LastCachedValue ?? "——";
+        }
+
+        AiProviderConfig? provider = null;
+        if (!string.IsNullOrEmpty(source.AiProviderId))
+        {
+            provider = AiProviderRegistry.GetAllProviders().FirstOrDefault(p => p.ProviderId == source.AiProviderId);
+        }
+
+        provider ??= AiProviderRegistry.GetDefaultProvider();
+        if (provider == null)
+        {
+            source.LastError = "No AI Provider available";
+            source.LastErrorTime = DateTime.Now;
+            return source.LastCachedValue ?? "——";
+        }
+
+        // Background Cloud AI check
+        bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(provider.BaseUrl);
+        var settings = SettingsService.LoadSettings();
+
+        if (!isLocal && !settings.AllowBackgroundCloudRequests)
+        {
+            source.LastError = "Background cloud AI requests disabled";
+            source.LastErrorTime = DateTime.Now;
+            return source.LastCachedValue ?? "——";
         }
 
         var req = new AiTurnRequest
         {
             UserPrompt = source.AiPrompt,
             TaskProfile = AiTaskProfile.WallpaperGeneration,
+            PreferredProvider = provider,
             DataSensitivity = DataSensitivity.Personal
         };
 
@@ -177,20 +254,20 @@ public static class DynamicDataService
             return result;
         }
 
-        return source.LastCachedValue ?? "—";
+        return source.LastCachedValue ?? "——";
     }
 
-    private static string ExtractValue(string rawContent, string extractionType, string rule)
+    private static ExtractionResult ExtractValue(string rawContent, string extractionType, string rule)
     {
-        if (string.IsNullOrEmpty(rule) || extractionType == "Raw") return rawContent;
+        if (string.IsNullOrEmpty(rule) || extractionType == "Raw") return ExtractionResult.Success(rawContent);
 
         if (extractionType == "JsonPath" || extractionType == "JSONPath" || extractionType == "Json")
         {
             if (JsonPathExtractor.TryExtract(rawContent, rule, out string val))
             {
-                return val;
+                return ExtractionResult.Success(val);
             }
-            return "(JsonPath Failed)";
+            return ExtractionResult.Fail($"JsonPath extraction failed for rule '{rule}'.");
         }
 
         if (extractionType == "Regex")
@@ -200,14 +277,18 @@ public static class DynamicDataService
                 var match = Regex.Match(rawContent, rule);
                 if (match.Success)
                 {
-                    return match.Groups.Count > 1 ? match.Groups[1].Value : match.Value;
+                    string res = match.Groups.Count > 1 ? match.Groups[1].Value : match.Value;
+                    return ExtractionResult.Success(res);
                 }
             }
-            catch { }
-            return "(Regex Failed)";
+            catch (Exception ex)
+            {
+                return ExtractionResult.Fail($"Regex evaluation error: {ex.Message}");
+            }
+            return ExtractionResult.Fail($"Regex match failed for rule '{rule}'.");
         }
 
-        return rawContent;
+        return ExtractionResult.Success(rawContent);
     }
 
     public static List<DynamicDataSource> GetDefaultPresets()

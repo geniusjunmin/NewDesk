@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NewDesk.Models.Ai;
+using NewDesk.Services.Ai.Protocol;
 using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
@@ -27,6 +28,8 @@ public class AnthropicMessagesProvider : IAiProvider
         Config = config;
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(Math.Max(5, config.TimeoutSeconds)) };
 
+        bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(config.BaseUrl);
+
         Capabilities = new AiProviderCapabilities
         {
             SupportsStreaming = config.Streaming,
@@ -35,8 +38,8 @@ public class AnthropicMessagesProvider : IAiProvider
             SupportsStructuredOutput = true,
             SupportsReasoning = true,
             SupportsResponsesApi = false,
-            SupportsModelListing = false,
-            IsLocal = false
+            SupportsModelListing = true,
+            IsLocal = isLocal
         };
     }
 
@@ -56,21 +59,14 @@ public class AnthropicMessagesProvider : IAiProvider
         var sw = Stopwatch.StartNew();
         try
         {
-            var req = new AiRequest
-            {
-                Model = string.IsNullOrEmpty(Config.SelectedModel) ? "claude-3-5-sonnet-20241022" : Config.SelectedModel,
-                Messages = new List<AiMessage> { new AiMessage { Role = "user", Content = "Hi" } },
-                MaxTokens = 10,
-                Stream = false
-            };
-            var resp = await CompleteAsync(req, cancellationToken);
+            var models = await GetModelsAsync(cancellationToken);
             sw.Stop();
             return new AiConnectionResult
             {
                 IsSuccess = true,
                 Message = "✓ Anthropic API 连接成功",
                 LatencyMs = sw.ElapsedMilliseconds,
-                ModelCount = 1
+                ModelCount = models.Count
             };
         }
         catch (Exception ex)
@@ -85,15 +81,45 @@ public class AnthropicMessagesProvider : IAiProvider
         }
     }
 
-    public Task<IReadOnlyList<AiModelInfo>> GetModelsAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<AiModelInfo>> GetModelsAsync(CancellationToken cancellationToken = default)
     {
-        var list = new List<AiModelInfo>
+        try
+        {
+            string url = Config.BaseUrl.TrimEnd('/') + "/models";
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            ApplyHeaders(req);
+
+            using var resp = await _httpClient.SendAsync(req, cancellationToken);
+            resp.EnsureSuccessStatusCode();
+
+            string json = await resp.Content.ReadAsStringAsync(cancellationToken);
+            using var doc = JsonDocument.Parse(json);
+
+            var list = new List<AiModelInfo>();
+            if (doc.RootElement.TryGetProperty("data", out var dataArr) && dataArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var elem in dataArr.EnumerateArray())
+                {
+                    string id = elem.TryGetProperty("id", out var idElem) ? idElem.GetString() ?? "" : "";
+                    string name = elem.TryGetProperty("display_name", out var dnElem) ? dnElem.GetString() ?? id : id;
+                    if (!string.IsNullOrEmpty(id))
+                    {
+                        list.Add(new AiModelInfo { Id = id, Name = name, OwnedBy = "Anthropic" });
+                    }
+                }
+            }
+
+            if (list.Count > 0) return list;
+        }
+        catch { }
+
+        // Fallback static list
+        return new List<AiModelInfo>
         {
             new AiModelInfo { Id = "claude-3-5-sonnet-20241022", Name = "Claude 3.5 Sonnet", OwnedBy = "Anthropic" },
             new AiModelInfo { Id = "claude-3-5-haiku-20241022", Name = "Claude 3.5 Haiku", OwnedBy = "Anthropic" },
             new AiModelInfo { Id = "claude-3-opus-20240229", Name = "Claude 3 Opus", OwnedBy = "Anthropic" }
         };
-        return Task.FromResult<IReadOnlyList<AiModelInfo>>(list);
     }
 
     public async Task<AiResponse> CompleteAsync(AiRequest request, CancellationToken cancellationToken = default)
@@ -113,7 +139,7 @@ public class AnthropicMessagesProvider : IAiProvider
         var root = doc.RootElement;
 
         string content = "";
-        List<AiToolCall>? toolCalls = null;
+        var toolCalls = new List<AiToolCall>();
 
         if (root.TryGetProperty("content", out var contentArr) && contentArr.ValueKind == JsonValueKind.Array)
         {
@@ -130,7 +156,6 @@ public class AnthropicMessagesProvider : IAiProvider
                     string name = elem.TryGetProperty("name", out var nElem) ? nElem.GetString() ?? "" : "";
                     string inputJson = elem.TryGetProperty("input", out var inElem) ? inElem.GetRawText() : "{}";
 
-                    toolCalls ??= new List<AiToolCall>();
                     toolCalls.Add(new AiToolCall { Id = id, Name = name, ArgumentsJson = inputJson });
                 }
             }
@@ -166,6 +191,10 @@ public class AnthropicMessagesProvider : IAiProvider
         using var stream = await resp.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
+        string currentToolId = "";
+        string currentToolName = "";
+        var currentJsonSb = new StringBuilder();
+
         while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
         {
             string? line = await reader.ReadLineAsync(cancellationToken);
@@ -185,12 +214,46 @@ public class AnthropicMessagesProvider : IAiProvider
                     if (root.TryGetProperty("type", out var typeElem))
                     {
                         string type = typeElem.GetString() ?? "";
-                        if (type == "content_block_delta" && root.TryGetProperty("delta", out var delta))
+
+                        if (type == "content_block_start" && root.TryGetProperty("content_block", out var cb))
                         {
-                            if (delta.TryGetProperty("text", out var tElem))
+                            string cbType = cb.TryGetProperty("type", out var cbt) ? cbt.GetString() ?? "" : "";
+                            if (cbType == "tool_use")
+                            {
+                                currentToolId = cb.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "";
+                                currentToolName = cb.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                                currentJsonSb.Clear();
+                            }
+                        }
+                        else if (type == "content_block_delta" && root.TryGetProperty("delta", out var delta))
+                        {
+                            string deltaType = delta.TryGetProperty("type", out var dt) ? dt.GetString() ?? "" : "";
+                            if (deltaType == "text_delta" && delta.TryGetProperty("text", out var tElem))
                             {
                                 chunk = new AiStreamChunk { TextDelta = tElem.GetString() };
                             }
+                            else if (deltaType == "input_json_delta" && delta.TryGetProperty("partial_json", out var pj))
+                            {
+                                currentJsonSb.Append(pj.GetString());
+                            }
+                        }
+                        else if (type == "content_block_stop" && !string.IsNullOrEmpty(currentToolId))
+                        {
+                            chunk = new AiStreamChunk
+                            {
+                                ToolCalls = new List<AiToolCall>
+                                {
+                                    new AiToolCall
+                                    {
+                                        Id = currentToolId,
+                                        Name = currentToolName,
+                                        ArgumentsJson = currentJsonSb.Length > 0 ? currentJsonSb.ToString() : "{}"
+                                    }
+                                }
+                            };
+                            currentToolId = "";
+                            currentToolName = "";
+                            currentJsonSb.Clear();
                         }
                         else if (type == "message_stop")
                         {
@@ -268,28 +331,7 @@ public class AnthropicMessagesProvider : IAiProvider
 
         if (Capabilities.SupportsTools && request.Tools != null && request.Tools.Count > 0)
         {
-            var anthropicTools = new List<object>();
-            foreach (var tool in request.Tools)
-            {
-                // Map function tool parameters to Anthropic input_schema
-                if (tool is IDictionary<string, object> dict && dict.TryGetValue("function", out var fn) && fn is IDictionary<string, object> fnDict)
-                {
-                    string name = fnDict.TryGetValue("name", out var n) ? n?.ToString() ?? "" : "";
-                    string desc = fnDict.TryGetValue("description", out var d) ? d?.ToString() ?? "" : "";
-                    object paramsSchema = fnDict.TryGetValue("parameters", out var p) ? p ?? new { type = "object", properties = new { } } : new { type = "object", properties = new { } };
-
-                    anthropicTools.Add(new
-                    {
-                        name = name,
-                        description = desc,
-                        input_schema = paramsSchema
-                    });
-                }
-            }
-            if (anthropicTools.Count > 0)
-            {
-                reqBody["tools"] = anthropicTools;
-            }
+            reqBody["tools"] = AnthropicToolMapper.MapTools(request.Tools);
         }
 
         return reqBody;

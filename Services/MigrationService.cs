@@ -1,30 +1,65 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
 namespace NewDesk.Services;
 
+public class MigrationState
+{
+    public int Settings { get; set; } = 1;
+    public int Reminders { get; set; } = 1;
+    public int Wallpapers { get; set; } = 1;
+    public int DynamicData { get; set; } = 1;
+    public int AI { get; set; } = 1;
+}
+
 public static class MigrationService
 {
-    public const int CurrentSettingsSchemaVersion = 2;
-    public const int CurrentPasswordSchemaVersion = 2;
-    public const int CurrentReminderSchemaVersion = 2;
-    public const int CurrentWallpaperSchemaVersion = 2;
-    public const int CurrentDynamicDataSchemaVersion = 2;
-    public const int CurrentAiSchemaVersion = 1;
+    public const int TargetSchemaVersion = 3;
+    private static string StateFilePath => Path.Combine(AppDataPath.DataFolder, "migration_state.json");
 
     public static void RunAllMigrationsIfNeeded()
     {
         try
         {
             AppDataPath.Initialize();
-            string migrationBackupDir = Path.Combine(AppDataPath.BackupsFolder, "Migration");
-            Directory.CreateDirectory(migrationBackupDir);
+            var state = LoadMigrationState();
 
-            BackupAndMigrateFile(AppDataPath.WallpapersFile, "wallpapers", migrationBackupDir);
-            BackupAndMigrateFile(AppDataPath.RemindersFile, "reminders", migrationBackupDir);
-            BackupAndMigrateFile(AppDataPath.PasswordsFile, "passwords", migrationBackupDir);
-            BackupAndMigrateFile(AppDataPath.SettingsFile, "settings", migrationBackupDir);
+            bool stateChanged = false;
+
+            if (state.DynamicData < TargetSchemaVersion)
+            {
+                DynamicDataService.LoadSources();
+                state.DynamicData = TargetSchemaVersion;
+                stateChanged = true;
+            }
+
+            if (state.Settings < TargetSchemaVersion)
+            {
+                SettingsService.LoadSettings();
+                state.Settings = TargetSchemaVersion;
+                stateChanged = true;
+            }
+
+            if (state.Reminders < TargetSchemaVersion)
+            {
+                DataService.LoadReminders();
+                state.Reminders = TargetSchemaVersion;
+                stateChanged = true;
+            }
+
+            if (state.Wallpapers < TargetSchemaVersion)
+            {
+                WallpaperService.LoadWallpapers();
+                state.Wallpapers = TargetSchemaVersion;
+                stateChanged = true;
+            }
+
+            if (stateChanged)
+            {
+                SaveMigrationState(state);
+            }
         }
         catch (Exception ex)
         {
@@ -32,20 +67,30 @@ public static class MigrationService
         }
     }
 
-    private static void BackupAndMigrateFile(string filePath, string fileTag, string backupDir)
+    private static MigrationState LoadMigrationState()
     {
-        if (!File.Exists(filePath)) return;
-
         try
         {
-            string timeStamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            string backupPath = Path.Combine(backupDir, $"{fileTag}.{timeStamp}.backup.json");
-            File.Copy(filePath, backupPath, overwrite: true);
-            AppDataPath.LogInfo($"Created pre-migration backup for {fileTag} at {backupPath}");
+            if (File.Exists(StateFilePath))
+            {
+                string json = File.ReadAllText(StateFilePath);
+                return JsonSerializer.Deserialize<MigrationState>(json) ?? new MigrationState();
+            }
+        }
+        catch { }
+        return new MigrationState();
+    }
+
+    private static void SaveMigrationState(MigrationState state)
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            SafeFileWriter.WriteAllText(StateFilePath, json);
         }
         catch (Exception ex)
         {
-            AppDataPath.LogError($"MigrationService.Backup ({fileTag})", ex);
+            AppDataPath.LogError("MigrationService.SaveMigrationState", ex);
         }
     }
 }

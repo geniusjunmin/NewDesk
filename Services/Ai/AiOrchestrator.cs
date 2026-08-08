@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using NewDesk.Models;
 using NewDesk.Models.Ai;
 using NewDesk.Services.Ai.Tools;
+using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
 
@@ -15,6 +18,7 @@ public class AiTurnRequest
     public AiProviderConfig? PreferredProvider { get; set; }
     public DataSensitivity DataSensitivity { get; set; } = DataSensitivity.Personal;
     public Func<PendingToolAction, Task<bool>>? ConfirmationCallback { get; set; }
+    public Func<CloudSendPreview, Task<bool>>? CloudConsentCallback { get; set; }
 }
 
 public enum AiTaskProfile
@@ -48,7 +52,41 @@ public static class AiOrchestrator
         string sanitizedPrompt = SecretRedactor.Redact(turnRequest.UserPrompt);
         AiPrivacyGuard.ValidateRequest(providerConfig, turnRequest.DataSensitivity, sanitizedPrompt);
 
-        // 3. Inject Context
+        // 3. AskBeforeCloud Consent Check
+        var settings = SettingsService.LoadSettings();
+        bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(providerConfig.BaseUrl);
+
+        if (!isLocal && settings.AiNetworkMode == AiNetworkMode.AskBeforeCloud)
+        {
+            if (turnRequest.CloudConsentCallback == null)
+            {
+                throw new InvalidOperationException("当前网络模式为【云端发送前询问】，但未提供云端发送确认接口。请求已取消。");
+            }
+
+            string host = "cloud";
+            try { host = new Uri(providerConfig.BaseUrl).Host; } catch { }
+
+            var preview = new CloudSendPreview
+            {
+                ProviderName = providerConfig.Name,
+                Model = providerConfig.SelectedModel,
+                EndpointHost = host,
+                DataSensitivity = turnRequest.DataSensitivity,
+                IncludesReminderContext = settings.AllowAiReminderContext,
+                IncludesWallpaperContext = settings.AllowAiWallpaperContext,
+                IncludesDynamicDataContext = settings.AllowAiDynamicDataContext,
+                IncludesClipboard = settings.AllowAiClipboard,
+                SanitizedPreview = sanitizedPrompt.Length > 200 ? sanitizedPrompt[..200] + "..." : sanitizedPrompt
+            };
+
+            bool consentGranted = await turnRequest.CloudConsentCallback(preview);
+            if (!consentGranted)
+            {
+                throw new InvalidOperationException("用户取消了云端 AI 发送授权。");
+            }
+        }
+
+        // 4. Inject Context
         string contextPrompt = AiContextBroker.BuildContextPrompt();
         string systemPrompt = string.IsNullOrEmpty(contextPrompt)
             ? "你是一个专业、高效的 Windows 桌面 AI 助手。"
@@ -56,7 +94,7 @@ public static class AiOrchestrator
 
         var provider = AiProviderFactory.CreateProvider(providerConfig);
 
-        // 4. Build Outbound Messages Payload with Redaction
+        // 5. Build Outbound Messages Payload with Redaction
         var outboundMessages = AiOutboundContextBuilder.BuildMessages(turnRequest.ConversationHistory, turnRequest.UserPrompt);
 
         var toolDefs = provider.Capabilities.SupportsTools ? AiToolRegistry.GetToolDefinitions() : null;
@@ -74,7 +112,7 @@ public static class AiOrchestrator
                 Messages = outboundMessages,
                 SystemPrompt = systemPrompt,
                 Stream = providerConfig.Streaming && progress != null && currentRound == 1,
-                Tools = toolDefs
+                Tools = toolDefs ?? new List<AiToolDefinition>()
             };
 
             AiResponse roundResponse;
@@ -87,7 +125,7 @@ public static class AiOrchestrator
                     {
                         roundResponse.Content += chunk.TextDelta;
                     }
-                    if (chunk.ToolCalls != null && chunk.ToolCalls.Count > 0)
+                    if (chunk.ToolCalls.Count > 0)
                     {
                         roundResponse.ToolCalls.AddRange(chunk.ToolCalls);
                     }
@@ -102,12 +140,12 @@ public static class AiOrchestrator
             finalResponse = roundResponse;
 
             // Check if model requested tool execution
-            if (roundResponse.ToolCalls == null || roundResponse.ToolCalls.Count == 0)
+            if (roundResponse.ToolCalls.Count == 0)
             {
                 return finalResponse;
             }
 
-            // Execute requested tools and append to conversation history for next round
+            // Append assistant tool-call turn
             outboundMessages.Add(new AiMessage
             {
                 Role = "assistant",
@@ -117,12 +155,32 @@ public static class AiOrchestrator
 
             foreach (var toolCall in roundResponse.ToolCalls)
             {
-                var toolResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, turnRequest.ConfirmationCallback);
+                // Validate Tool Arguments before execution
+                var validation = AiToolArgumentValidator.ValidateArguments(toolCall.Name, toolCall.ArgumentsJson);
+                AiToolResult toolResult;
+
+                if (!validation.IsValid)
+                {
+                    toolResult = new AiToolResult
+                    {
+                        ToolCallId = toolCall.Id,
+                        IsError = true,
+                        OutputJson = JsonSerializer.Serialize(new { success = false, error = $"工具参数校验失败: {validation.ErrorMessage}" })
+                    };
+                }
+                else
+                {
+                    toolResult = await AiToolExecutionService.ExecuteToolWithPermissionAsync(toolCall, turnRequest.ConfirmationCallback);
+                }
+
+                // Redact secrets from Tool Output before submitting back to model
+                string sanitizedOutput = SecretRedactor.Redact(toolResult.OutputJson);
+
                 outboundMessages.Add(new AiMessage
                 {
                     Role = "tool",
                     ToolCallId = toolCall.Id,
-                    Content = toolResult.OutputJson
+                    Content = sanitizedOutput
                 });
             }
         }

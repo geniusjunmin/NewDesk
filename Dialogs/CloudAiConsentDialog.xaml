@@ -1,0 +1,80 @@
+<Window x:Class="NewDesk.Dialogs.CloudAiConsentDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="云端 AI 发送授权确认" Height="420" Width="480"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="#18181B" Foreground="#F4F4F5">
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="☁️" FontSize="20" Margin="0,0,8,0"/>
+                <TextBlock Text="即将向云端 AI 发送数据" FontSize="18" FontWeight="Bold" Foreground="#F4F4F5"/>
+            </StackPanel>
+            <TextBlock Text="当前网络模式为【云端发送前询问】，请确认本次发送内容。" FontSize="13" Foreground="#A1A1AA" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <!-- Content Info -->
+        <Border Grid.Row="1" Background="#27272A" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="服务提供商:" Foreground="#A1A1AA" FontSize="13"/>
+                        <TextBlock Grid.Column="1" x:Name="TxtProvider" Text="OpenAI" Foreground="#38BDF8" FontWeight="SemiBold" FontSize="13"/>
+                    </Grid>
+
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="模型名称:" Foreground="#A1A1AA" FontSize="13"/>
+                        <TextBlock Grid.Column="1" x:Name="TxtModel" Text="gpt-4o" Foreground="#F4F4F5" FontSize="13"/>
+                    </Grid>
+
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="目标服务器:" Foreground="#A1A1AA" FontSize="13"/>
+                        <TextBlock Grid.Column="1" x:Name="TxtEndpoint" Text="api.openai.com" Foreground="#A1A1AA" FontSize="13"/>
+                    </Grid>
+
+                    <Separator Background="#3F3F46" Margin="0,0,0,12"/>
+
+                    <TextBlock Text="包含的数据项:" Foreground="#F4F4F5" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,8"/>
+                    <StackPanel x:Name="PanelContextItems" Margin="0,0,0,12">
+                        <TextBlock Text="✓ 用户输入文本 (已自动脱敏)" Foreground="#4ADE80" FontSize="12" Margin="0,2"/>
+                    </StackPanel>
+
+                    <TextBlock Text="发送预览 (前200字符):" Foreground="#A1A1AA" FontSize="12" Margin="0,4,0,4"/>
+                    <Border Background="#18181B" CornerRadius="4" Padding="8">
+                        <TextBlock x:Name="TxtPreview" Text="..." Foreground="#D4D4D8" FontSize="12" TextWrapping="Wrap" FontFamily="Consolas"/>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Action Buttons -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="取消" Width="90" Height="36" Margin="0,0,12,0"
+                    Background="#3F3F46" Foreground="#F4F4F5" BorderThickness="0"
+                    Click="BtnCancel_Click"/>
+            <Button Content="允许发送" Width="110" Height="36"
+                    Background="#2563EB" Foreground="#FFFFFF" FontWeight="SemiBold" BorderThickness="0"
+                    Click="BtnAllow_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

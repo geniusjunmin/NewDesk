@@ -12,6 +12,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="NewDesk.Tests\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="Resources\icon.ico">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>

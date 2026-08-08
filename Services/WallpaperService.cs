@@ -25,7 +25,7 @@ public static class WallpaperService
     private const int SPI_SETDESKWALLPAPER = 20;
     private const int SPIF_UPDATEINIFILE = 0x01;
     private const int SPIF_SENDWININICHANGE = 0x02;
-    
+
     private static readonly HttpClient HttpClient = new();
     private static DispatcherTimer? _refreshTimer;
     private static DispatcherTimer? _rotationTimer;
@@ -35,18 +35,71 @@ public static class WallpaperService
     private static WallpaperRotationMode _rotationMode;
     private static bool _isDisplayListenerInitialized = false;
 
+    public static List<WallpaperState> LoadWallpapers()
+    {
+        try
+        {
+            string path = AppDataPath.WallpapersFile;
+            if (File.Exists(path))
+            {
+                string json = File.ReadAllText(path);
+                return JsonSerializer.Deserialize<List<WallpaperState>>(json) ?? GetDefaultPresets();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppDataPath.LogError("WallpaperService.LoadWallpapers", ex);
+        }
+        return GetDefaultPresets();
+    }
+
+    public static void SaveWallpapers(List<WallpaperState> wallpapers)
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(wallpapers, new JsonSerializerOptions { WriteIndented = true });
+            SafeFileWriter.WriteAllText(AppDataPath.WallpapersFile, json);
+        }
+        catch (Exception ex)
+        {
+            AppDataPath.LogError("WallpaperService.SaveWallpapers", ex);
+        }
+    }
+
+    public static string SaveWallpaperAsset(string sourceFilePath)
+    {
+        if (!File.Exists(sourceFilePath)) return sourceFilePath;
+
+        try
+        {
+            string assetsDir = Path.Combine(AppDataPath.DataFolder, "Wallpapers", "Assets");
+            Directory.CreateDirectory(assetsDir);
+
+            string ext = Path.GetExtension(sourceFilePath);
+            string assetFileName = $"{Guid.NewGuid():N}{ext}";
+            string destPath = Path.Combine(assetsDir, assetFileName);
+
+            byte[] data = File.ReadAllBytes(sourceFilePath);
+            SafeFileWriter.WriteAllBytes(destPath, data);
+            return destPath;
+        }
+        catch (Exception ex)
+        {
+            AppDataPath.LogError("WallpaperService.SaveWallpaperAsset", ex);
+            return sourceFilePath;
+        }
+    }
+
     public static void InitializeDisplaySettingsListener()
     {
         if (_isDisplayListenerInitialized) return;
-        
+
         SystemEvents.DisplaySettingsChanged += async (s, e) =>
         {
-            System.Diagnostics.Debug.WriteLine("Display settings changed. Refreshing wallpaper after delay...");
-            // Delay a bit to let the system stabilize
             await Task.Delay(2000);
             await RefreshAsync();
         };
-        
+
         _isDisplayListenerInitialized = true;
     }
 
@@ -55,7 +108,6 @@ public static class WallpaperService
         StopAutoRefresh();
         _currentState = state;
 
-        // Auto-refresh for dynamic content (time, API, etc.)
         if (state.RefreshIntervalMinutes > 0)
         {
             _refreshTimer = new DispatcherTimer();
@@ -69,8 +121,6 @@ public static class WallpaperService
     {
         _refreshTimer?.Stop();
         _refreshTimer = null;
-        // Do NOT null out _currentState here if we are just stopping the timer but keeping the wallpaper
-        // But for clarity, let's keep it as is, assuming this stops *everything* about that specific wallpaper instance.
         _currentState = null;
     }
 
@@ -79,7 +129,7 @@ public static class WallpaperService
         StopRotation();
         if (wallpapers == null || wallpapers.Count == 0) return;
 
-        _rotationList = wallpapers.ToList(); // Clone list to be safe
+        _rotationList = wallpapers.ToList();
         _rotationMode = mode;
         _currentRotationIndex = -1;
 
@@ -88,7 +138,6 @@ public static class WallpaperService
         _rotationTimer.Tick += async (s, e) => await RotateNextAsync();
         _rotationTimer.Start();
 
-        // Trigger first rotation immediately on the UI thread
         _ = Application.Current?.Dispatcher?.InvokeAsync(RotateNextAsync);
     }
 
@@ -103,57 +152,43 @@ public static class WallpaperService
     {
         try
         {
-            if (_rotationList == null || _rotationList.Count == 0)
-            {
-                System.Diagnostics.Debug.WriteLine("Rotation failed: List is empty.");
-                return;
-            }
+            if (_rotationList == null || _rotationList.Count == 0) return;
 
             if (_rotationMode == WallpaperRotationMode.Random)
             {
                 var random = new Random();
                 _currentRotationIndex = random.Next(_rotationList.Count);
             }
-            else // Sequential
+            else
             {
                 _currentRotationIndex++;
-                if (_currentRotationIndex >= _rotationList.Count || _currentRotationIndex < 0) 
+                if (_currentRotationIndex >= _rotationList.Count || _currentRotationIndex < 0)
                     _currentRotationIndex = 0;
             }
 
             if (_currentRotationIndex >= 0 && _currentRotationIndex < _rotationList.Count)
             {
                 var nextState = _rotationList[_currentRotationIndex];
-                
-                System.Diagnostics.Debug.WriteLine($"[Rotation] Switching to: {nextState.Name} (Index: {_currentRotationIndex})");
-                
-                // Set wallpaper (this handles generation)
                 await GenerateAndSetWallpaperAsync(nextState);
-                
-                // Start auto-refresh for dynamic content within this wallpaper
                 StartAutoRefresh(nextState);
             }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Rotation error: {ex.Message}");
-            // Use dispatcher to show toast since we might be on a timer thread
-            Application.Current?.Dispatcher?.Invoke(() => 
-                ToastManager.Show("轮换错误", $"自动更换壁纸失败: {ex.Message}", ToastType.Error));
+            AppDataPath.LogError("WallpaperService.RotateNextAsync", ex);
         }
     }
 
     public static async Task RefreshAsync()
     {
         if (_currentState == null) return;
-        
         try
         {
             await GenerateAndSetWallpaperAsync(_currentState);
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Auto-refresh failed: {ex.Message}");
+            AppDataPath.LogError("WallpaperService.RefreshAsync", ex);
         }
     }
 
@@ -161,16 +196,38 @@ public static class WallpaperService
     {
         AppDataPath.LogInfo($"Starting GenerateAndSetWallpaperAsync for {state.Name}");
 
-        // 1. Fetch API Data
-        var apiTasks = new Dictionary<TextElementState, Task<string>>();
-        foreach (var element in state.TextElements.Where(e => e.DynamicType == "Api" && !string.IsNullOrEmpty(e.ApiUrl)))
-        {
-            apiTasks[element] = GetApiTextAsync(element.ApiUrl!, element.ApiRegex, element.ApiFormatting, element.ApiPrefix, element.ApiSuffix);
-        }
-        await Task.WhenAll(apiTasks.Values);
-        var apiResults = apiTasks.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Result);
+        // 1. Fetch Dynamic Data & Legacy API Data with single-request Task deduplication per render pass
+        var dataSourceTasks = new Dictionary<string, Task<string>>();
+        var sourceMap = DynamicDataService.LoadSources().ToDictionary(s => s.Id, s => s);
 
-        // 2. Render and Set
+        foreach (var element in state.TextElements.Where(e => e.IsVisible))
+        {
+            if (!string.IsNullOrEmpty(element.DataSourceId) && sourceMap.TryGetValue(element.DataSourceId, out var src))
+            {
+                if (!dataSourceTasks.ContainsKey(element.DataSourceId))
+                {
+                    dataSourceTasks[element.DataSourceId] = DynamicDataService.FetchValueAsync(src);
+                }
+            }
+            else if (element.DynamicType == "Api" && !string.IsNullOrEmpty(element.ApiUrl))
+            {
+                string key = element.ApiUrl!;
+                if (!dataSourceTasks.ContainsKey(key))
+                {
+                    dataSourceTasks[key] = GetApiTextAsync(element.ApiUrl!, element.ApiRegex, element.ApiFormatting, element.ApiPrefix, element.ApiSuffix);
+                }
+            }
+        }
+
+        await Task.WhenAll(dataSourceTasks.Values);
+
+        var dataResults = new Dictionary<string, string>();
+        foreach (var kvp in dataSourceTasks)
+        {
+            dataResults[kvp.Key] = kvp.Value.Result;
+        }
+
+        // 2. Render and Set Desktop Wallpaper
         await Application.Current.Dispatcher.InvokeAsync(async () =>
         {
             try
@@ -178,7 +235,6 @@ public static class WallpaperService
                 var desktopWallpaper = (NativeMethods.IDesktopWallpaper)new NativeMethods.DesktopWallpaperClass();
                 desktopWallpaper.Enable(true);
                 uint monitorCount = desktopWallpaper.GetMonitorDevicePathCount();
-                AppDataPath.LogInfo($"Detected {monitorCount} monitors via IDesktopWallpaper.");
 
                 if (monitorCount == 0) throw new Exception("No monitors detected.");
 
@@ -211,8 +267,17 @@ public static class WallpaperService
 
                         foreach (var element in state.TextElements)
                         {
-                            string apiResultText = apiResults.TryGetValue(element, out var res) ? res : string.Empty;
-                            WallpaperTextRenderer.DrawElement(dc, element, apiResultText, scaleX, scaleY);
+                            string dataText = "";
+                            if (!string.IsNullOrEmpty(element.DataSourceId) && dataResults.TryGetValue(element.DataSourceId, out var val1))
+                            {
+                                dataText = val1;
+                            }
+                            else if (!string.IsNullOrEmpty(element.ApiUrl) && dataResults.TryGetValue(element.ApiUrl, out var val2))
+                            {
+                                dataText = val2;
+                            }
+
+                            WallpaperTextRenderer.DrawElement(dc, element, dataText, scaleX, scaleY);
                         }
                     }
 
@@ -227,7 +292,6 @@ public static class WallpaperService
                     try
                     {
                         desktopWallpaper.SetWallpaper(monitorId, wallpaperPath);
-                        AppDataPath.LogInfo($"Set wallpaper for monitor {i} success.");
                         anySuccess = true;
                     }
                     catch (Exception ex)
@@ -241,283 +305,9 @@ public static class WallpaperService
             }
             catch (Exception ex)
             {
-                AppDataPath.LogError($"Multi-monitor logic failed: {ex.Message}. Falling back.", ex);
-                await FallbackSetWallpaperAsync(state, apiResults);
+                AppDataPath.LogError($"Multi-monitor wallpaper rendering failed: {ex.Message}", ex);
             }
         });
-    }
-
-    private static async Task FallbackSetWallpaperAsync(WallpaperState state, Dictionary<TextElementState, string> apiResults)
-    {
-        await Task.Yield();
-        AppDataPath.LogInfo("Starting FallbackSetWallpaperAsync (Span Mode)");
-
-        var monitors = GetMonitors();
-        if (monitors.Count == 0)
-        {
-             AppDataPath.LogInfo("No monitors found in fallback. Aborting.");
-             return;
-        }
-
-        // 1. Calculate virtual canvas bounds (Physical pixels)
-        int minX = int.MaxValue, minY = int.MaxValue;
-        int maxX = int.MinValue, maxY = int.MinValue;
-
-        foreach (var m in monitors)
-        {
-            minX = Math.Min(minX, m.rcMonitor.Left);
-            minY = Math.Min(minY, m.rcMonitor.Top);
-            maxX = Math.Max(maxX, m.rcMonitor.Right);
-            maxY = Math.Max(maxY, m.rcMonitor.Bottom);
-        }
-
-        int totalWidth = maxX - minX;
-        int totalHeight = maxY - minY;
-
-        AppDataPath.LogInfo($"Fallback Canvas Size: {totalWidth}x{totalHeight} (Min: {minX},{minY})");
-
-        if (totalWidth <= 0 || totalHeight <= 0) return;
-
-        var drawingVisual = new DrawingVisual();
-        RenderOptions.SetBitmapScalingMode(drawingVisual, BitmapScalingMode.HighQuality);
-
-        using (var dc = drawingVisual.RenderOpen())
-        {
-            dc.DrawRectangle(Brushes.Black, null, new Rect(0, 0, totalWidth, totalHeight));
-
-            foreach (var monitor in monitors)
-            {
-                int monitorX = monitor.rcMonitor.Left - minX;
-                int monitorY = monitor.rcMonitor.Top - minY;
-                int monitorWidth = monitor.rcMonitor.Right - monitor.rcMonitor.Left;
-                int monitorHeight = monitor.rcMonitor.Bottom - monitor.rcMonitor.Top;
-
-                if (!string.IsNullOrEmpty(state.BackgroundImagePath) && File.Exists(state.BackgroundImagePath))
-                {
-                    try
-                    {
-                        var originalImage = BitmapFrame.Create(new Uri(state.BackgroundImagePath), BitmapCreateOptions.IgnoreImageCache, BitmapCacheOption.OnLoad);
-                        dc.DrawImage(originalImage, new Rect(monitorX, monitorY, monitorWidth, monitorHeight));
-                    }
-                    catch { }
-                }
-
-                double scaleX = state.DesignWidth > 0 ? (double)monitorWidth / state.DesignWidth : 1.0;
-                double scaleY = state.DesignHeight > 0 ? (double)monitorHeight / state.DesignHeight : 1.0;
-
-                foreach (var element in state.TextElements)
-                {
-                    string apiResultText = apiResults.TryGetValue(element, out var res) ? res : string.Empty;
-                    WallpaperTextRenderer.DrawElement(dc, element, apiResultText, scaleX, scaleY, monitorX, monitorY);
-                }
-            }
-        }
-
-        var rtb = new RenderTargetBitmap(totalWidth, totalHeight, 96, 96, PixelFormats.Pbgra32);
-        rtb.Render(drawingVisual);
-        var encoder = new PngBitmapEncoder { Frames = { BitmapFrame.Create(rtb) } };
-        string wallpaperPath = Path.Combine(Path.GetTempPath(), "NewDesk", "fallback_wallpaper_span.png");
-        Directory.CreateDirectory(Path.GetDirectoryName(wallpaperPath)!);
-        using (var fs = new FileStream(wallpaperPath, FileMode.Create, FileAccess.Write)) encoder.Save(fs);
-
-        using (var key = Registry.CurrentUser.OpenSubKey("Control Panel\\Desktop", true))
-        {
-            key?.SetValue("WallpaperStyle", "22"); // Span
-            key?.SetValue("TileWallpaper", "0");
-        }
-        
-        // Use SPIF_SENDWININICHANGE to ensure refresh
-        SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallpaperPath, SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE);
-        AppDataPath.LogInfo($"Fallback completed. Wallpaper set to: {wallpaperPath}");
-    }
-
-
-    #region Helpers
-    
-    private static List<NativeMethods.MONITORINFOEX> GetMonitors()
-    {
-        var monitors = new List<NativeMethods.MONITORINFOEX>();
-        NativeMethods.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr hMonitor, IntPtr hdcMonitor, ref NativeMethods.RECT lprcMonitor, IntPtr dwData) =>
-        {
-            var mi = new NativeMethods.MONITORINFOEX();
-            if (NativeMethods.GetMonitorInfo(hMonitor, mi)) monitors.Add(mi);
-            return true;
-        }, IntPtr.Zero);
-        return monitors;
-    }
-
-    private static void DrawTextElementOnDrawingContext(
-        DrawingContext dc,
-        TextElementState element,
-        string apiResultText,
-        double scaleX,
-        double scaleY,
-        double offsetX = 0,
-        double offsetY = 0)
-    {
-        string textToRender = element.Text;
-        if (element.DynamicType == "GregorianDate") textToRender = GetGregorianDateString(element.DateFormat);
-        else if (element.DynamicType == "LunarDate") textToRender = GetLunarDateString();
-        else if (element.DynamicType == "DayOfWeek") textToRender = GetDayOfWeekString();
-        else if (element.DynamicType == "Api" && !string.IsNullOrEmpty(apiResultText)) textToRender = apiResultText;
-
-        if (string.IsNullOrEmpty(textToRender)) return;
-
-        double fontScale = Math.Min(scaleX, scaleY);
-        double fontSize = Math.Max(1.0, element.FontSize * fontScale);
-
-        var style = element.Italic ? FontStyles.Italic : FontStyles.Normal;
-        var weight = element.Bold ? FontWeights.Bold : FontWeights.Normal;
-        var typeface = new Typeface(new FontFamily(element.FontFamily), style, weight, FontStretches.Normal);
-
-        Color textColor;
-        try { textColor = (Color)ColorConverter.ConvertFromString(element.Color); }
-        catch { textColor = Colors.White; }
-        var mainBrush = new SolidColorBrush(textColor);
-
-        var formattedText = new FormattedText(
-            textToRender,
-            CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight,
-            typeface,
-            fontSize,
-            mainBrush,
-            96.0);
-
-        if (element.Underline)
-        {
-            formattedText.SetTextDecorations(TextDecorations.Underline);
-        }
-
-        formattedText.TextAlignment = element.Alignment switch
-        {
-            "Center" => TextAlignment.Center,
-            "Right" => TextAlignment.Right,
-            _ => TextAlignment.Left
-        };
-
-        double x = offsetX + (element.X * scaleX);
-        double y = offsetY + (element.Y * scaleY);
-        Point location = new Point(x, y);
-
-        // 1. Background Box
-        if (element.BackgroundEnabled)
-        {
-            Color bgColor;
-            try { bgColor = (Color)ColorConverter.ConvertFromString(element.BackgroundColor); }
-            catch { bgColor = Colors.Black; }
-            bgColor.A = (byte)(Math.Clamp(element.BackgroundOpacity, 0, 1) * 255);
-            var bgBrush = new SolidColorBrush(bgColor);
-
-            double pad = element.BackgroundPadding * fontScale;
-            Rect bgRect = new Rect(
-                x - pad,
-                y - pad,
-                formattedText.Width + (pad * 2),
-                formattedText.Height + (pad * 2));
-
-            double rx = element.BackgroundCornerRadius * fontScale;
-            dc.DrawRoundedRectangle(bgBrush, null, bgRect, rx, rx);
-        }
-
-        // 2. Shadow
-        if (element.ShadowEnabled)
-        {
-            Color shadowColor;
-            try { shadowColor = (Color)ColorConverter.ConvertFromString(element.ShadowColor); }
-            catch { shadowColor = Colors.Black; }
-            shadowColor.A = (byte)(Math.Clamp(element.ShadowOpacity, 0, 1) * 255);
-            var shadowBrush = new SolidColorBrush(shadowColor);
-
-            var shadowText = new FormattedText(
-                textToRender,
-                CultureInfo.CurrentCulture,
-                FlowDirection.LeftToRight,
-                typeface,
-                fontSize,
-                shadowBrush,
-                96.0)
-            {
-                TextAlignment = formattedText.TextAlignment
-            };
-            if (element.Underline) shadowText.SetTextDecorations(TextDecorations.Underline);
-
-            Point shadowLoc = new Point(
-                x + (element.ShadowOffsetX * fontScale),
-                y + (element.ShadowOffsetY * fontScale));
-
-            dc.DrawText(shadowText, shadowLoc);
-        }
-
-        // 3. Stroke
-        if (element.StrokeEnabled && element.StrokeThickness > 0)
-        {
-            Color strokeColor;
-            try { strokeColor = (Color)ColorConverter.ConvertFromString(element.StrokeColor); }
-            catch { strokeColor = Colors.Black; }
-            var strokePen = new Pen(new SolidColorBrush(strokeColor), element.StrokeThickness * fontScale);
-
-            Geometry textGeom = formattedText.BuildGeometry(location);
-            dc.DrawGeometry(mainBrush, strokePen, textGeom);
-        }
-        else
-        {
-            dc.DrawText(formattedText, location);
-        }
-    }
-
-    private static string GetGregorianDateString(string? format = null)
-    {
-        if (string.IsNullOrEmpty(format)) format = "yyyy-MM-dd";
-        try
-        {
-            return DateTime.Now.ToString(format, CultureInfo.CurrentCulture);
-        }
-        catch
-        {
-            return DateTime.Now.ToString("yyyy-MM-dd");
-        }
-    }
-    
-    private static string GetDayOfWeekString() => DateTime.Now.ToString("dddd", new CultureInfo("zh-CN"));
-
-    private static string GetLunarDateString()
-    {
-        try
-        {
-            var calendar = new ChineseLunisolarCalendar();
-            var date = DateTime.Now;
-            var year = calendar.GetYear(date);
-            var month = calendar.GetMonth(date);
-            var day = calendar.GetDayOfMonth(date);
-            var leapMonth = calendar.GetLeapMonth(year);
-
-            string[] lunarMonthNames = { "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月" };
-            string[] lunarDayNames = { "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十" };
-
-            string monthString;
-            if (leapMonth > 0 && month >= leapMonth)
-            {
-                if (month == leapMonth)
-                {
-                    int prevMonthIndex = month - 2;
-                    monthString = (prevMonthIndex >= 0 && prevMonthIndex < lunarMonthNames.Length) ? "闰" + lunarMonthNames[prevMonthIndex] : "闰月";
-                }
-                else
-                {
-                    int realMonthIndex = month - 2;
-                    monthString = (realMonthIndex >= 0 && realMonthIndex < lunarMonthNames.Length) ? lunarMonthNames[realMonthIndex] : "未知月";
-                }
-            }
-            else
-            {
-                monthString = (month - 1 >= 0 && month - 1 < lunarMonthNames.Length) ? lunarMonthNames[month - 1] : "未知月";
-            }
-
-            string dayString = (day - 1 >= 0 && day - 1 < lunarDayNames.Length) ? lunarDayNames[day - 1] : "未知日";
-            return $"农历 {monthString}{dayString}";
-        }
-        catch { return "农历日期获取失败"; }
     }
 
     private static async Task<string> GetApiTextAsync(string url, string? regex, string? formatting, string? prefix = null, string? suffix = null)
@@ -531,25 +321,26 @@ public static class WallpaperService
             if (!match.Success) return "(Regex Fail)";
 
             string extractedValue = match.Groups.Count > 1 ? match.Groups[1].Value : match.Value;
-
-            if (formatting == "流量单位转换 (B -> MB/GB)")
-            {
-                extractedValue = GetSize(extractedValue);
-            }
             return (prefix ?? "") + extractedValue + (suffix ?? "");
         }
         catch { return "(API Fail)"; }
     }
 
-    private static string GetSize(string bstr)
+    public static List<WallpaperState> GetDefaultPresets()
     {
-        if (long.TryParse(bstr, out long b))
+        return new List<WallpaperState>
         {
-            if (b >= 1024 * 1024 * 1024) return (b / 1024.0 / 1024.0 / 1024.0).ToString("F2") + " GB";
-            return (b / 1024.0 / 1024.0).ToString("F2") + " MB";
-        }
-        return bstr;
+            new WallpaperState
+            {
+                Name = "默认极简风桌面",
+                DesignWidth = 1920,
+                DesignHeight = 1080,
+                TextElements = new List<TextElementState>
+                {
+                    new TextElementState { Text = "{公历日期}", DynamicType = "GregorianDate", X = 100, Y = 100, FontSize = 48, Bold = true },
+                    new TextElementState { Text = "{星期}", DynamicType = "DayOfWeek", X = 100, Y = 170, FontSize = 28 }
+                }
+            }
+        };
     }
-
-    #endregion
 }

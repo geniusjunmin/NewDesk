@@ -1,6 +1,7 @@
 using System;
 using NewDesk.Models;
 using NewDesk.Models.Ai;
+using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
 
@@ -24,7 +25,7 @@ public static class AiPrivacyGuard
             throw new InvalidOperationException("【隐私防护动效】安全决策阻断：包含绝密凭据/主密码，禁止发送至任何 AI！");
         }
 
-        bool isLocal = provider.Kind == AiProviderKind.Ollama || provider.Kind == AiProviderKind.LMStudio || provider.BaseUrl.Contains("localhost") || provider.BaseUrl.Contains("127.0.0.1");
+        bool isLocal = NetworkEndpointClassifier.IsLocalEndpoint(provider.BaseUrl);
 
         // 2. Local-Only Mode Enforcement
         if (settings.AiNetworkMode == AiNetworkMode.LocalOnly && !isLocal)

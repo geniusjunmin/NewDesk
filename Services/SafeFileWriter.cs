@@ -36,8 +36,8 @@ public static class SafeFileWriter
         }
         catch (Exception ex)
         {
-            AppDataPath.LogError($"SafeFileWriter.WriteAllText ({filePath})", ex);
-            File.WriteAllText(filePath, content, Encoding.UTF8);
+            AppDataPath.LogError($"SafeFileWriter.WriteAllText failed for ({filePath})", ex);
+            throw new IOException($"SafeFileWriter 原子文件写入失败 ({filePath}): {ex.Message}", ex);
         }
         finally
         {
@@ -76,8 +76,8 @@ public static class SafeFileWriter
         }
         catch (Exception ex)
         {
-            AppDataPath.LogError($"SafeFileWriter.WriteAllBytes ({filePath})", ex);
-            File.WriteAllBytes(filePath, data);
+            AppDataPath.LogError($"SafeFileWriter.WriteAllBytes failed for ({filePath})", ex);
+            throw new IOException($"SafeFileWriter 原子二进制写入失败 ({filePath}): {ex.Message}", ex);
         }
         finally
         {

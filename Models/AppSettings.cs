@@ -54,7 +54,7 @@ public class AppSettings
     public int WallpaperRotationIntervalMinutes { get; set; }
     public WallpaperRotationMode WallpaperRotationMode { get; set; }
 
-    // Configurable Hotkeys (Phase 30)
+    // Configurable Hotkeys
     public HotkeyBinding MainWindowHotkey { get; set; } = new((uint)(Services.HotkeyModifiers.Ctrl | Services.HotkeyModifiers.Alt), Key.D);
     public HotkeyBinding AiQuickHotkey { get; set; } = new((uint)(Services.HotkeyModifiers.Ctrl | Services.HotkeyModifiers.Shift), Key.Space);
     public HotkeyBinding CommandPaletteHotkey { get; set; } = new((uint)Services.HotkeyModifiers.Ctrl, Key.K);
@@ -78,7 +78,7 @@ public class AppSettings
     public bool AutoClearClipboard { get; set; } = true;
     public int AutoClearClipboardSeconds { get; set; } = 30;
 
-    // AI Privacy Defaults (Phase 20: Safe Privacy Opt-in Defaults)
+    // AI Privacy Defaults
     public bool EnableAiAssistant { get; set; } = true;
     public AiNetworkMode AiNetworkMode { get; set; } = AiNetworkMode.AskBeforeCloud;
     public bool AllowAiReminderContext { get; set; } = false;
@@ -88,8 +88,9 @@ public class AppSettings
     public bool AllowAiLogAnalysis { get; set; } = false;
     public bool AllowAiClipboard { get; set; } = false;
     public bool AllowCloudFallback { get; set; } = false;
+    public bool AllowBackgroundCloudRequests { get; set; } = false;
 
-    public string LastRunVersion { get; set; } = "2.2.0";
+    public string LastRunVersion { get; set; } = "2.2.1";
 
     public AppSettings()
     {

@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using NewDesk.Dialogs;
 using NewDesk.Models.Ai;
 using NewDesk.Services;
 using NewDesk.Services.Ai;
@@ -45,6 +46,13 @@ public partial class ClipboardAiWindow : Window
 
     private async void Action_Click(object sender, RoutedEventArgs e)
     {
+        var settings = SettingsService.LoadSettings();
+        if (!settings.AllowAiClipboard)
+        {
+            MessageBox.Show("剪贴板 AI 助手默认处于关闭状态。\n请先在【系统设置 -> AI 隐私】中开启【允许 AI 使用剪贴板】后再试。", "剪贴板 AI 已禁用", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         if (sender is Button btn && btn.Tag is string actionTag)
         {
             if (string.IsNullOrEmpty(_clipboardText))
@@ -72,7 +80,12 @@ public partial class ClipboardAiWindow : Window
                 {
                     UserPrompt = prompt,
                     TaskProfile = AiTaskProfile.FastCommand,
-                    DataSensitivity = DataSensitivity.Personal
+                    DataSensitivity = DataSensitivity.Sensitive,
+                    CloudConsentCallback = async preview =>
+                    {
+                        var dlg = new CloudAiConsentDialog(preview) { Owner = this };
+                        return dlg.ShowDialog() == true && dlg.IsAllowed;
+                    }
                 };
 
                 var progress = new Progress<AiStreamChunk>(chunk =>

@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using NewDesk.Models.Ai;
 using NewDesk.Services.Ai;
+using NewDesk.Services.Security;
 
 namespace NewDesk.Dialogs;
 
@@ -18,7 +19,7 @@ public partial class AiProviderEditorWindow : Window
     public AiProviderEditorWindow(AiProviderConfig? config = null)
     {
         InitializeComponent();
-        _config = config ?? new AiProviderConfig();
+        _config = config?.Clone() ?? new AiProviderConfig();
 
         Loaded += AiProviderEditorWindow_Loaded;
     }
@@ -37,7 +38,7 @@ public partial class AiProviderEditorWindow : Window
 
             if (!string.IsNullOrEmpty(_config.SecretId))
             {
-                string? secret = AiSecretStorageService.GetSecret(_config.SecretId);
+                string? secret = SecretStorageService.GetSecret(_config.SecretId);
                 ApiKeyPasswordBox.Password = secret ?? "";
                 ApiKeyTextBox.Text = secret ?? "";
             }
@@ -53,7 +54,7 @@ public partial class AiProviderEditorWindow : Window
         if (_isInitializing) return;
 
         var kind = (AiProviderKind)KindComboBox.SelectedIndex;
-        var preset = AiProviderRegistry.GetDefaultPresets().Find(p => p.Kind == kind);
+        var preset = AiProviderTemplateRegistry.GetTemplates().Find(p => p.Kind == kind);
         if (preset != null)
         {
             NameTextBox.Text = preset.Name;
@@ -85,17 +86,20 @@ public partial class AiProviderEditorWindow : Window
         TestResultBorder.Visibility = Visibility.Collapsed;
 
         SyncConfigFromUI();
+
+        var testConfig = _config.Clone();
         var tempSecretId = "temp_test_" + Guid.NewGuid().ToString("N");
         string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
+
         if (!string.IsNullOrEmpty(key))
         {
-            AiSecretStorageService.SaveSecret(tempSecretId, key);
-            _config.SecretId = tempSecretId;
+            SecretStorageService.SaveSecret(tempSecretId, key);
+            testConfig.SecretId = tempSecretId;
         }
 
         try
         {
-            var provider = AiProviderFactory.CreateProvider(_config);
+            var provider = AiProviderFactory.CreateProvider(testConfig);
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             var res = await provider.TestConnectionAsync(cts.Token);
 
@@ -122,7 +126,7 @@ public partial class AiProviderEditorWindow : Window
         }
         finally
         {
-            AiSecretStorageService.DeleteSecret(tempSecretId);
+            SecretStorageService.DeleteSecret(tempSecretId);
             TestConnectionButton.IsEnabled = true;
             TestConnectionButton.Content = "⚡ 测试连接";
         }
@@ -134,17 +138,20 @@ public partial class AiProviderEditorWindow : Window
         FetchModelsButton.Content = "⟳ 获取中...";
 
         SyncConfigFromUI();
+
+        var testConfig = _config.Clone();
         var tempSecretId = "temp_fetch_" + Guid.NewGuid().ToString("N");
         string key = ShowKeyToggle.IsChecked == true ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
+
         if (!string.IsNullOrEmpty(key))
         {
-            AiSecretStorageService.SaveSecret(tempSecretId, key);
-            _config.SecretId = tempSecretId;
+            SecretStorageService.SaveSecret(tempSecretId, key);
+            testConfig.SecretId = tempSecretId;
         }
 
         try
         {
-            var provider = AiProviderFactory.CreateProvider(_config);
+            var provider = AiProviderFactory.CreateProvider(testConfig);
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             var models = await provider.GetModelsAsync(cts.Token);
 
@@ -164,7 +171,7 @@ public partial class AiProviderEditorWindow : Window
         }
         finally
         {
-            AiSecretStorageService.DeleteSecret(tempSecretId);
+            SecretStorageService.DeleteSecret(tempSecretId);
             FetchModelsButton.IsEnabled = true;
             FetchModelsButton.Content = "⟳ 自动获取模型";
         }
@@ -196,7 +203,7 @@ public partial class AiProviderEditorWindow : Window
 
         if (!string.IsNullOrEmpty(key))
         {
-            AiSecretStorageService.SaveSecret(_config.SecretId, key);
+            SecretStorageService.SaveSecret(_config.SecretId, key);
         }
 
         AiProviderRegistry.SaveProvider(_config);

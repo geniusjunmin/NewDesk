@@ -14,6 +14,7 @@ public static class ReminderService
     private static Timer? _timer;
     private static List<Reminder> _reminders = new();
     private static ReminderFrequency _frequency;
+    public static IClock Clock { get; set; } = SystemClock.Instance;
 
     public static void Start(List<Reminder> reminders, ReminderFrequency frequency)
     {
@@ -27,11 +28,14 @@ public static class ReminderService
         _timer?.Dispose();
     }
 
-    private static void CheckReminders(object? state)
+    public static void CheckReminders(object? state)
     {
-        DateTime now = DateTime.Now;
-        foreach (var reminder in _reminders.ToList()) // Use ToList() to create a copy for safe iteration
+        DateTime now = Clock.Now;
+        foreach (var reminder in _reminders.ToList())
         {
+            if (reminder.IsCompleted) continue;
+            if (reminder.SnoozeUntil.HasValue && reminder.SnoozeUntil.Value > now) continue;
+
             bool shouldNotify = false;
             switch (_frequency)
             {
@@ -51,23 +55,68 @@ public static class ReminderService
 
             if (!shouldNotify) continue;
 
-            UpdateNextReminderDate(reminder);
-
-            if (now.Date >= reminder.NextReminderDate.AddDays(-reminder.DaysInAdvance))
+            if (reminder.ScheduleType == ReminderScheduleType.OneTime && reminder.DueAt.HasValue)
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                DateTime due = reminder.DueAt.Value;
+                DateTime triggerStart = due.AddDays(-reminder.DaysInAdvance);
+
+                if (now >= triggerStart)
                 {
-                    ShowReminderToast(reminder);
-                    reminder.LastNotifiedDate = now;
-                    DataService.SaveReminders(_reminders);
-                });
+                    bool isFinalDue = now >= due;
+                    if (Application.Current != null)
+                    {
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            ShowReminderToast(reminder);
+                            reminder.LastNotifiedDate = now;
+                            if (isFinalDue)
+                            {
+                                reminder.IsCompleted = true;
+                            }
+                            DataService.SaveReminders(_reminders);
+                        });
+                    }
+                    else
+                    {
+                        reminder.LastNotifiedDate = now;
+                        if (isFinalDue)
+                        {
+                            reminder.IsCompleted = true;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                UpdateNextReminderDate(reminder);
+
+                if (now.Date >= reminder.NextReminderDate.AddDays(-reminder.DaysInAdvance))
+                {
+                    if (Application.Current != null)
+                    {
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            ShowReminderToast(reminder);
+                            reminder.LastNotifiedDate = now;
+                            DataService.SaveReminders(_reminders);
+                        });
+                    }
+                    else
+                    {
+                        reminder.LastNotifiedDate = now;
+                    }
+                }
             }
         }
     }
 
     private static void ShowReminderToast(Reminder reminder)
     {
-        var toast = new ReminderToastWindow(reminder.Title, $"今天是 {reminder.NextReminderDate:yyyy-MM-dd}！", autoClose: false);
+        string message = reminder.DueAt.HasValue
+            ? $"提醒时间: {reminder.DueAt.Value:yyyy-MM-dd HH:mm}"
+            : $"今天是 {reminder.NextReminderDate:yyyy-MM-dd}！";
+
+        var toast = new ReminderToastWindow(reminder.Title, message, autoClose: false);
         toast.Show();
     }
 
@@ -79,7 +128,7 @@ public static class ReminderService
 
     public static void UpdateNextReminderDate(Reminder reminder)
     {
-        DateTime today = DateTime.Today;
+        DateTime today = Clock.Now.Date;
         int currentYear = today.Year;
 
         DateTime reminderDateThisYear;
@@ -91,7 +140,7 @@ public static class ReminderService
                 int month = reminder.Month;
                 if (leapMonth > 0 && month >= leapMonth)
                 {
-                    month++; // Adjust for leap month
+                    month++;
                 }
                 reminderDateThisYear = LunarCalendar.ToDateTime(currentYear, month, reminder.Day, 0, 0, 0, 0);
             }
@@ -102,14 +151,12 @@ public static class ReminderService
         }
         catch (ArgumentOutOfRangeException)
         {
-            // Handle cases where the date is invalid for the current year (e.g., Feb 29 on a non-leap year)
             if (reminder.Month == 2 && reminder.Day == 29)
             {
                 reminderDateThisYear = new DateTime(currentYear, 2, 28);
             }
             else
             {
-                // For other invalid dates, just use the end of the month
                 int daysInMonth = CultureInfo.CurrentCulture.Calendar.GetDaysInMonth(currentYear, reminder.Month);
                 reminderDateThisYear = new DateTime(currentYear, reminder.Month, daysInMonth);
             }
@@ -117,7 +164,6 @@ public static class ReminderService
 
         if (reminderDateThisYear.AddDays(-reminder.DaysInAdvance) < today)
         {
-            // If it has already passed this year, calculate for next year
             reminder.NextReminderDate = GetNextYearDate(reminder, currentYear + 1);
         }
         else
@@ -147,7 +193,6 @@ public static class ReminderService
         }
         catch (ArgumentOutOfRangeException)
         {
-            // If next year is also invalid (e.g. Feb 29), try the year after
             return GetNextYearDate(reminder, year + 1);
         }
     }

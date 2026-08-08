@@ -10,6 +10,7 @@ namespace NewDesk.Services.Security;
 public static class SecretStorageService
 {
     private static readonly object FileLock = new();
+    private static bool _isCorruptedState;
 
     private static string SecretsFilePath => Path.Combine(AppDataPath.DataFolder, "Secrets", "ai_secrets.dat");
 
@@ -20,6 +21,10 @@ public static class SecretStorageService
         lock (FileLock)
         {
             var secrets = LoadAllSecretsInternal();
+            if (_isCorruptedState)
+            {
+                throw new InvalidOperationException("密钥存储文件已损坏，已暂停覆盖保存以保护数据。已自动备份损坏文件。");
+            }
             secrets[key] = secretValue;
             SaveAllSecretsInternal(secrets);
         }
@@ -43,6 +48,10 @@ public static class SecretStorageService
         lock (FileLock)
         {
             var secrets = LoadAllSecretsInternal();
+            if (_isCorruptedState)
+            {
+                throw new InvalidOperationException("密钥存储文件已损坏，已暂停修改操作。");
+            }
             if (secrets.Remove(key))
             {
                 SaveAllSecretsInternal(secrets);
@@ -52,25 +61,53 @@ public static class SecretStorageService
 
     private static Dictionary<string, string> LoadAllSecretsInternal()
     {
+        string path = SecretsFilePath;
+        if (!File.Exists(path))
+        {
+            _isCorruptedState = false;
+            return new Dictionary<string, string>();
+        }
+
         try
         {
-            string path = SecretsFilePath;
-            if (!File.Exists(path)) return new Dictionary<string, string>();
-
             byte[] encryptedData = File.ReadAllBytes(path);
+            if (encryptedData.Length == 0)
+            {
+                _isCorruptedState = false;
+                return new Dictionary<string, string>();
+            }
+
             byte[] decryptedData = ProtectedData.Unprotect(encryptedData, null, DataProtectionScope.CurrentUser);
             string json = Encoding.UTF8.GetString(decryptedData);
 
-            return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+            var result = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            _isCorruptedState = false;
+            return result ?? new Dictionary<string, string>();
         }
-        catch
+        catch (Exception ex)
         {
+            _isCorruptedState = true;
+            AppDataPath.LogError("SecretStorageService.LoadAllSecretsInternal (CORRUPTED DPAPI FILE)", ex);
+
+            try
+            {
+                string corruptBackupPath = Path.Combine(Path.GetDirectoryName(path)!, $"ai_secrets.corrupt.{DateTime.Now:yyyyMMdd_HHmmss}.dat");
+                File.Copy(path, corruptBackupPath, true);
+                AppDataPath.LogInfo($"Copied corrupted secrets file to: {corruptBackupPath}");
+            }
+            catch { }
+
             return new Dictionary<string, string>();
         }
     }
 
     private static void SaveAllSecretsInternal(Dictionary<string, string> secrets)
     {
+        if (_isCorruptedState)
+        {
+            throw new InvalidOperationException("无法覆盖保存损坏的密钥数据库。");
+        }
+
         try
         {
             string dir = Path.GetDirectoryName(SecretsFilePath)!;
@@ -85,6 +122,7 @@ public static class SecretStorageService
         catch (Exception ex)
         {
             AppDataPath.LogError("SecretStorageService.SaveAllSecretsInternal", ex);
+            throw;
         }
     }
 }

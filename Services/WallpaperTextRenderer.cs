@@ -21,10 +21,12 @@ public static class WallpaperTextRenderer
 
         string textToRender = element.Text;
         if (element.DynamicType == "GregorianDate") textToRender = GetGregorianDateString(element.DateFormat);
-        else if (element.DynamicType == "LunarDate") textToRender = "农历 八月十五";
+        else if (element.DynamicType == "LunarDate") textToRender = GetLunarDateString();
         else if (element.DynamicType == "DayOfWeek") textToRender = DateTime.Now.ToString("dddd", new CultureInfo("zh-CN"));
-        else if (element.DynamicType == "Api" && !string.IsNullOrEmpty(apiResultText)) textToRender = apiResultText;
-        else if (element.DynamicType == "AiPrompt" && !string.IsNullOrEmpty(apiResultText)) textToRender = apiResultText;
+        else if ((element.DynamicType == "Api" || element.DynamicType == "DataSource" || !string.IsNullOrEmpty(element.DataSourceId)) && !string.IsNullOrEmpty(apiResultText))
+        {
+            textToRender = apiResultText;
+        }
 
         if (string.IsNullOrEmpty(textToRender)) return;
 
@@ -136,5 +138,44 @@ public static class WallpaperTextRenderer
         if (string.IsNullOrEmpty(format)) format = "yyyy-MM-dd";
         try { return DateTime.Now.ToString(format, CultureInfo.CurrentCulture); }
         catch { return DateTime.Now.ToString("yyyy-MM-dd"); }
+    }
+
+    private static string GetLunarDateString()
+    {
+        try
+        {
+            var calendar = new ChineseLunisolarCalendar();
+            var date = DateTime.Now;
+            var year = calendar.GetYear(date);
+            var month = calendar.GetMonth(date);
+            var day = calendar.GetDayOfMonth(date);
+            var leapMonth = calendar.GetLeapMonth(year);
+
+            string[] lunarMonthNames = { "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月" };
+            string[] lunarDayNames = { "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十" };
+
+            string monthString;
+            if (leapMonth > 0 && month >= leapMonth)
+            {
+                if (month == leapMonth)
+                {
+                    int prevMonthIndex = month - 2;
+                    monthString = (prevMonthIndex >= 0 && prevMonthIndex < lunarMonthNames.Length) ? "闰" + lunarMonthNames[prevMonthIndex] : "闰月";
+                }
+                else
+                {
+                    int realMonthIndex = month - 2;
+                    monthString = (realMonthIndex >= 0 && realMonthIndex < lunarMonthNames.Length) ? lunarMonthNames[realMonthIndex] : "未知月";
+                }
+            }
+            else
+            {
+                monthString = (month - 1 >= 0 && month - 1 < lunarMonthNames.Length) ? lunarMonthNames[month - 1] : "未知月";
+            }
+
+            string dayString = (day - 1 >= 0 && day - 1 < lunarDayNames.Length) ? lunarDayNames[day - 1] : "未知日";
+            return $"农历 {monthString}{dayString}";
+        }
+        catch { return "农历 八月十五"; }
     }
 }

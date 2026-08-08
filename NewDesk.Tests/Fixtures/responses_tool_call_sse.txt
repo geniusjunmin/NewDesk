@@ -1,0 +1,11 @@
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"item_999","type":"function_call","call_id":"call_abc123","name":"create_reminder"}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"item_999","delta":"{\"title\":\"开会\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"item_999","type":"function_call","call_id":"call_abc123","name":"create_reminder","arguments":"{\"title\":\"开会\"}"}}
+
+event: response.completed
+data: {"type":"response.completed"}

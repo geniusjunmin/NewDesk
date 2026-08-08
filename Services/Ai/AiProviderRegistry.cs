@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using NewDesk.Models.Ai;
+using NewDesk.Models.Security;
+using NewDesk.Services.Security;
 
 namespace NewDesk.Services.Ai;
 
@@ -27,6 +29,10 @@ public static class AiProviderRegistry
     public static void SaveProvider(AiProviderConfig config)
     {
         EnsureLoaded();
+
+        // Security check
+        EndpointSecurityPolicy.ValidateEndpoint(config.BaseUrl, transmitsSecrets: !string.IsNullOrEmpty(config.SecretId));
+
         int idx = _providers.FindIndex(p => p.ProviderId == config.ProviderId);
         if (idx >= 0)
         {
@@ -56,7 +62,7 @@ public static class AiProviderRegistry
         {
             if (!string.IsNullOrEmpty(p.SecretId))
             {
-                AiSecretStorageService.DeleteSecret(p.SecretId);
+                SecretStorageService.DeleteSecret(p.SecretId);
             }
             _providers.Remove(p);
             PersistProviders();
@@ -74,17 +80,18 @@ public static class AiProviderRegistry
             if (File.Exists(path))
             {
                 string json = File.ReadAllText(path);
-                _providers = JsonSerializer.Deserialize<List<AiProviderConfig>>(json) ?? new List<AiProviderConfig>();
+                var loaded = JsonSerializer.Deserialize<List<AiProviderConfig>>(json) ?? new List<AiProviderConfig>();
+                // Filter out unconfigured disabled presets
+                _providers = loaded.Where(p => p.IsEnabled || !string.IsNullOrEmpty(p.SecretId)).ToList();
             }
             else
             {
-                _providers = GetDefaultPresets();
-                PersistProviders();
+                _providers = new List<AiProviderConfig>();
             }
         }
         catch
         {
-            _providers = GetDefaultPresets();
+            _providers = new List<AiProviderConfig>();
         }
     }
 
@@ -99,78 +106,5 @@ public static class AiProviderRegistry
         {
             AppDataPath.LogError("AiProviderRegistry.PersistProviders", ex);
         }
-    }
-
-    public static List<AiProviderConfig> GetDefaultPresets()
-    {
-        return new List<AiProviderConfig>
-        {
-            new AiProviderConfig
-            {
-                ProviderId = "preset_openai",
-                Kind = AiProviderKind.OpenAI,
-                Name = "OpenAI",
-                BaseUrl = "https://api.openai.com/v1",
-                Protocol = AiApiProtocol.Responses,
-                SelectedModel = "gpt-4o",
-                IsDefault = false,
-                IsEnabled = false
-            },
-            new AiProviderConfig
-            {
-                ProviderId = "preset_gemini",
-                Kind = AiProviderKind.Gemini,
-                Name = "Google Gemini",
-                BaseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/",
-                Protocol = AiApiProtocol.ChatCompletions,
-                SelectedModel = "gemini-2.0-flash",
-                IsDefault = false,
-                IsEnabled = false
-            },
-            new AiProviderConfig
-            {
-                ProviderId = "preset_xai",
-                Kind = AiProviderKind.XAI,
-                Name = "xAI (Grok)",
-                BaseUrl = "https://api.x.ai/v1",
-                Protocol = AiApiProtocol.Responses,
-                SelectedModel = "grok-2-latest",
-                IsDefault = false,
-                IsEnabled = false
-            },
-            new AiProviderConfig
-            {
-                ProviderId = "preset_minimax",
-                Kind = AiProviderKind.MiniMax,
-                Name = "MiniMax",
-                BaseUrl = "https://api.minimax.io/v1",
-                Protocol = AiApiProtocol.ChatCompletions,
-                SelectedModel = "abab6.5s-chat",
-                IsDefault = false,
-                IsEnabled = false
-            },
-            new AiProviderConfig
-            {
-                ProviderId = "preset_deepseek",
-                Kind = AiProviderKind.DeepSeek,
-                Name = "DeepSeek",
-                BaseUrl = "https://api.deepseek.com",
-                Protocol = AiApiProtocol.ChatCompletions,
-                SelectedModel = "deepseek-chat",
-                IsDefault = false,
-                IsEnabled = false
-            },
-            new AiProviderConfig
-            {
-                ProviderId = "preset_claude",
-                Kind = AiProviderKind.Claude,
-                Name = "Anthropic Claude",
-                BaseUrl = "https://api.anthropic.com/v1",
-                Protocol = AiApiProtocol.AnthropicMessages,
-                SelectedModel = "claude-3-5-sonnet-20241022",
-                IsDefault = false,
-                IsEnabled = false
-            }
-        };
     }
 }
